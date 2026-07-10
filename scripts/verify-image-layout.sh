@@ -26,6 +26,7 @@ require_path() {
 }
 
 require_path /tmp/magisk.apk
+require_path /system/bin/magisk
 require_path /system/etc/redroid/redroid-magisk-setup.sh
 require_path /system/etc/init/redroid-magisk.rc
 require_path /system/etc/redroid/magisk/util_functions.sh
