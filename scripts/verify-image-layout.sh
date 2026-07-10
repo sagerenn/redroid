@@ -26,7 +26,6 @@ require_path() {
 }
 
 require_path /tmp/magisk.apk
-require_path /system/app/Magisk/Magisk.apk
 require_path /data/adb/magisk/util_functions.sh
 require_path /data/adb/magisk/boot_patch.sh
 require_path /data/adb/magisk/module_installer.sh
