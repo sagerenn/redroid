@@ -17,11 +17,12 @@ RUN MAGISK_VERSION=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/relea
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk-latest.apk"
 
 # Extract Magisk binaries
-RUN unzip -o magisk.apk 'lib/arm64-v8a/*' -d extracted && \
+RUN unzip -o magisk.apk 'lib/arm64-v8a/*' -d extracted || true && \
     mkdir -p binaries && \
     if [ -d extracted/lib/arm64-v8a ]; then \
-      cp extracted/lib/arm64-v8a/* binaries/ 2>/dev/null || true; \
-    fi
+      cp extracted/lib/arm64-v8a/* binaries/ || true; \
+    fi && \
+    touch binaries/.keep
 
 # Main image - redroid base for Android 13
 FROM redroid/redroid:13.0.0-latest
@@ -30,7 +31,7 @@ FROM redroid/redroid:13.0.0-latest
 COPY --from=builder /magisk/magisk.apk /magisk.apk
 
 # Copy Magisk binaries if available
-COPY --from=builder /magisk/binaries/* /magisk-bin/ 2>/dev/null || true
+COPY --from=builder /magisk/binaries /magisk-bin
 
 # Create setup script that will be run manually or via adb
 RUN echo '#!/system/bin/sh' > /setup-magisk.sh && \
