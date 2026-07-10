@@ -6,6 +6,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    default-jdk-headless \
+    apktool \
+    python3 \
     unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
@@ -31,6 +34,10 @@ RUN mkdir -p runtime && \
     unzip -p magisk.apk lib/x86_64/libmagiskinit.so > runtime/magiskinit && \
     unzip -p magisk.apk lib/x86_64/libmagiskpolicy.so > runtime/magiskpolicy && \
     chmod 755 runtime/busybox runtime/magisk runtime/magisk32 runtime/magiskboot runtime/magiskinit runtime/magiskpolicy runtime/module_installer.sh
+
+COPY scripts/repack-magisk-manager.sh /magisk/repack-magisk-manager.sh
+RUN chmod 755 /magisk/repack-magisk-manager.sh && \
+    /magisk/repack-magisk-manager.sh /magisk/magisk.apk /magisk/magisk-manager.apk
 
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS nativebridge
 
@@ -96,6 +103,7 @@ COPY --from=nativebridge /native-bridge/system/lib64/libnb.so /system/lib64/libn
 
 # Keep the Magisk APK in /tmp so it can be installed as a user app at runtime.
 COPY --from=magisk /magisk/magisk.apk /tmp/magisk.apk
+COPY --from=magisk /magisk/magisk-manager.apk /tmp/magisk-manager.apk
 COPY --from=magisk /magisk/runtime/ /system/etc/redroid/magisk/
 COPY --from=magisk /magisk/runtime/magisk /system/bin/magisk
 COPY --from=magisk /magisk/runtime/magisk /system/bin/su

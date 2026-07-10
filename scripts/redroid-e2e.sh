@@ -124,8 +124,7 @@ adb -s "$adb_serial" shell getprop ro.build.version.release
 adb -s "$adb_serial" shell id | grep -q 'uid=0'
 adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 
-magisk_pkg='com.topjohnwu.magisk'
-magisk_activity='com.topjohnwu.magisk.ui.MainActivity'
+magisk_pkg='repackaged.com.topjohnwu.magisk'
 magisk_flash_action='com.topjohnwu.magisk.intent.FLASH'
 magisk_section_key='section'
 vector_manager_pkg='org.lsposed.manager'
@@ -134,7 +133,7 @@ yuntai_pkg='com.ctyun.oa'
 yuntai_activity='com.ctg.itrdc.mf.yimu.modules.splash.ui.YunTaiSplashActivity'
 vector_module_id='zygisk_vector'
 
-adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
+adb -s "$adb_serial" shell pm install -r /tmp/magisk-manager.apk
 for perm in \
   android.permission.POST_NOTIFICATIONS \
   android.permission.READ_EXTERNAL_STORAGE \
@@ -143,13 +142,16 @@ do
   adb -s "$adb_serial" shell pm grant "$magisk_pkg" "$perm" >/dev/null 2>&1 || true
 done
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
-adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity"
+magisk_activity=$(adb -s "$adb_serial" shell cmd package resolve-activity --brief "$magisk_pkg" \
+  | tr -d '\r' | tail -n 1)
+[[ $magisk_activity == */* ]]
+adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
 
-adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" superuser
+adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity" --es "$magisk_section_key" superuser
 wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/superuserFragment"[^>]*selected="true"' 'Magisk Superuser section'
 
-adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" modules
+adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity" --es "$magisk_section_key" modules
 wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/module_list"|resource-id="com.topjohnwu.magisk:id/modulesFragment"[^>]*selected="true"' 'Magisk Modules section'
 
 curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
@@ -163,7 +165,7 @@ adb -s "$adb_serial" shell am start -W \
   -a "$magisk_flash_action" \
   --es flash_action flash \
   --es flash_uri file:///data/local/tmp/vector-module.zip \
-  "$magisk_pkg/$magisk_activity"
+  "$magisk_activity"
 
 wait_for_ui_match 20 'Flashing|Done|Failed' 'Magisk flash screen'
 
