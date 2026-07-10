@@ -22,18 +22,18 @@ stub_apk="$workdir/stub.apk"
 unzip -p "$magisk_apk" assets/stub.apk > "$stub_apk"
 
 decoded="$workdir/stub"
-apktool d -f -o "$decoded" "$stub_apk" >/dev/null
+unzip -q "$stub_apk" -d "$decoded"
 
-manifest="$decoded/AndroidManifest.xml"
+manifest_bin="$decoded/AndroidManifest.xml"
 
-python3 - <<'PY' "$manifest" "$package_name" "$app_label"
+python3 - <<'PY' "$manifest_bin" "$package_name" "$app_label"
 import random
-import re
+import struct
 import sys
 from pathlib import Path
 
 manifest_path, package_name, app_label = sys.argv[1:4]
-text = Path(manifest_path).read_text(encoding='utf-8')
+data = bytearray(Path(manifest_path).read_bytes())
 
 letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 tail = letters + '0123456789'
@@ -52,7 +52,6 @@ for a in letters:
 rng.shuffle(first)
 rng.shuffle(second)
 rng.shuffle(third)
-
 names = first + second[:30] + third[:30]
 used = set()
 
@@ -64,20 +63,84 @@ def next_name():
             used.add(name)
             return name
 
-mapping = {f'x.COMPONENT_PLACEHOLDER_{idx}': next_name() for idx in range(6)}
+replacements = {
+    'com.topjohnwu.magisk': package_name,
+    'Magisk': app_label,
+}
+for idx in range(6):
+    replacements[f'x.COMPONENT_PLACEHOLDER_{idx}'] = next_name()
 
-text = text.replace('package="com.topjohnwu.magisk"', f'package="{package_name}"')
-text = text.replace('android:authorities="com.topjohnwu.magisk.provider"', f'android:authorities="{package_name}.provider"')
-text = text.replace('android:label="Magisk"', f'android:label="{app_label}"')
+def u32(off):
+    return struct.unpack_from('<I', data, off)[0]
 
-for old, new in mapping.items():
-    text = text.replace(old, new)
+def u16(off):
+    return struct.unpack_from('<H', data, off)[0]
 
-Path(manifest_path).write_text(text, encoding='utf-8')
+def put_u32(off, value):
+    struct.pack_into('<I', data, off, value)
+
+def find_string_pool():
+    off = 8
+    while off < len(data):
+      chunk_type = u16(off)
+      header_size = u16(off + 2)
+      chunk_size = u32(off + 4)
+      if chunk_type == 0x0001:
+        return off
+      if chunk_size <= 0:
+        raise RuntimeError('invalid chunk size')
+      off += chunk_size
+    raise RuntimeError('string pool not found')
+
+start = find_string_pool()
+size = u32(start + 4)
+count = u32(start + 8)
+flags = u32(start + 16)
+data_off = start + u32(start + 20)
+utf8 = (flags & 0x100) != 0
+if utf8:
+    raise RuntimeError('unexpected utf8 string pool')
+
+indices = [u32(start + 28 + i * 4) for i in range(count)]
+strings = []
+for idx in indices:
+    off = data_off + idx
+    strlen = u16(off)
+    raw = data[off + 2:off + 2 + strlen * 2].decode('utf-16le')
+    strings.append(raw)
+
+patched = [replacements.get(s, s) for s in strings]
+prefix = bytearray(data[:data_off])
+string_blob = bytearray()
+new_indices = []
+for s in patched:
+    new_indices.append(len(string_blob))
+    encoded = s.encode('utf-16le')
+    string_blob += struct.pack('<H', len(s))
+    string_blob += encoded
+    string_blob += b'\x00\x00'
+while len(string_blob) % 4:
+    string_blob += b'\x00'
+
+new_size = len(prefix) - start + len(string_blob)
+size_diff = new_size - size
+
+put_u32(4, u32(4) + size_diff)
+put_u32(start + 4, new_size)
+
+for i, idx in enumerate(new_indices):
+    put_u32(start + 28 + i * 4, idx)
+
+patched_bytes = bytearray()
+patched_bytes += data[:data_off]
+patched_bytes += string_blob
+patched_bytes += data[start + size:]
+
+Path(manifest_path).write_bytes(patched_bytes)
 PY
 
-built_dir="$workdir/build"
-apktool b -o "$built_dir/unsigned.apk" "$decoded" >/dev/null
+unsigned_apk="$workdir/unsigned.apk"
+(cd "$decoded" && zip -qr "$unsigned_apk" .)
 
 keystore="$workdir/manager.jks"
 storepass=magisk
@@ -95,7 +158,7 @@ keytool -genkeypair \
   -dname "C=US,ST=California,L=Mountain View,O=Google Inc.,OU=Android,CN=Android" \
   >/dev/null 2>&1
 
-cp "$built_dir/unsigned.apk" "$output_apk"
+cp "$unsigned_apk" "$output_apk"
 jarsigner \
   -keystore "$keystore" \
   -storepass "$storepass" \

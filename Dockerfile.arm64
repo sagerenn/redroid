@@ -10,6 +10,7 @@ RUN apt-get update && \
     apktool \
     python3 \
     unzip \
+    zip \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
