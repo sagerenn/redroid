@@ -67,6 +67,7 @@ def next_name():
             return name
 
 replacements = {
+    'com.topjohnwu.magisk.provider': f'{package_name}.provider',
     'com.topjohnwu.magisk': package_name,
     'Magisk': app_label,
 }
