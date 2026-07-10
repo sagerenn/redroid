@@ -18,7 +18,7 @@ RUN MAGISK_VERSION=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/relea
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk-latest.apk"
 
 # Main image - redroid base for Android 13 on AMD64 with ARM64 translation
-FROM redroid/redroid:13.0.0-amd64
+FROM redroid/redroid:13.0.0-latest
 
 # Copy Magisk
 COPY --from=builder /magisk/magisk.apk /data/local/tmp/magisk.apk
