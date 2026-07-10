@@ -12,30 +12,18 @@ cd /data/adb/magisk
 
 chmod 755 busybox magisk magiskboot magiskinit magiskpolicy module_installer.sh
 
-# Running Magisk in a live Android environment requires the tmpfs layout that
-# magiskinit usually creates before zygote starts. This mirrors Magisk's own
-# emulator bootstrap path closely enough for redroid runtime testing.
-magisk --stop >/dev/null 2>&1 || true
-stop
-
-if [ -d /debug_ramdisk ]; then
-  umount -l /debug_ramdisk 2>/dev/null || true
-fi
-
-setprop sys.boot_completed 0
-
 if ! grep -q ' /cache ' /proc/mounts; then
   mount -t tmpfs -o mode=0755 tmpfs /cache
 fi
 
 MAGISKTMP=/debug_ramdisk
-if [ ! -d "$MAGISKTMP" ]; then
+if ! mountpoint -q "$MAGISKTMP" 2>/dev/null; then
   mv magisk magisk.tmp
   mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP"
   mv magisk.tmp magisk
 fi
 
-mkdir -p "$MAGISKTMP/.magisk/device" "$MAGISKTMP/.magisk/worker"
+mkdir -p "$MAGISKTMP/.magisk" "$MAGISKTMP/.magisk/device" "$MAGISKTMP/.magisk/worker"
 mountpoint -q "$MAGISKTMP/.magisk/worker" || mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP/.magisk/worker"
 mount --make-private "$MAGISKTMP/.magisk/worker"
 touch "$MAGISKTMP/.magisk/config"
@@ -79,10 +67,7 @@ fi
 mkdir -p /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
 
 "$MAGISKTMP/magisk" --post-fs-data >/dev/null 2>&1 || true
-start
 "$MAGISKTMP/magisk" --service >/dev/null 2>&1 || true
-sleep 2
 "$MAGISKTMP/magisk" --boot-complete >/dev/null 2>&1 || true
 
 touch "$MARKER"
-
