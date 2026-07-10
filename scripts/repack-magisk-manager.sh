@@ -24,6 +24,9 @@ unzip -p "$magisk_apk" assets/stub.apk > "$stub_apk"
 decoded="$workdir/stub"
 unzip -q "$stub_apk" -d "$decoded"
 
+# Drop the original stub signatures before rebuilding the APK.
+rm -rf "$decoded/META-INF"
+
 manifest_bin="$decoded/AndroidManifest.xml"
 
 python3 - <<'PY' "$manifest_bin" "$package_name" "$app_label"
@@ -140,7 +143,7 @@ Path(manifest_path).write_bytes(patched_bytes)
 PY
 
 unsigned_apk="$workdir/unsigned.apk"
-(cd "$decoded" && zip -qr "$unsigned_apk" .)
+(cd "$decoded" && zip -qr "$unsigned_apk" . -x 'META-INF/*')
 
 keystore="$workdir/manager.jks"
 storepass=magisk
