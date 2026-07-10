@@ -1,11 +1,11 @@
 # Redroid 13 with Magisk
 
-Docker images for Android 13 (redroid) with the Magisk app preinstalled, a staged Magisk runtime under `/data/adb/magisk`, and support for both ARM64 and AMD64 hosts.
+Docker images for Android 13 (redroid) with the Magisk APK staged for user-space installation, a staged Magisk runtime under `/data/adb/magisk`, and support for both ARM64 and AMD64 hosts.
 
 ## Features
 
 - **Android 13** running in Docker containers
-- **Magisk** app preinstalled as a system app
+- **Magisk** APK staged for user-app installation
 - **Magisk runtime payload** staged at `/data/adb/magisk`
 - **Multi-architecture**: ARM64 64-bit-only and AMD64 with ARM64 translation
 - **Real runtime smoke test** in GitHub Actions
@@ -58,15 +58,15 @@ adb shell getprop ro.build.version.release
 
 ### Magisk Layout
 
-The image now carries both the user-facing app and the runtime files used by the module installer:
+The image now carries both the APK used for user-space installation and the runtime files used by the module installer:
 
-- System app: `/system/app/Magisk/Magisk.apk`
 - APK mirror for manual installs/tests: `/tmp/magisk.apk`
 - Runtime payload: `/data/adb/magisk`
 
-To start the Magisk app:
+Install and start the Magisk app:
 
 ```bash
+adb install -r /tmp/magisk.apk
 adb shell am start -W -n com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
 ```
 
@@ -162,7 +162,6 @@ The workflow runs on every push to main and can be triggered manually.
 ## Magisk Details
 
 - **Version**: Latest stable release (automatically downloaded during build)
-- **System app**: `/system/app/Magisk/Magisk.apk`
 - **APK mirror**: `/tmp/magisk.apk`
 - **Runtime payload**: `/data/adb/magisk`
 - **Module CLI**: `/data/adb/magisk/magisk --install-module <zip>`

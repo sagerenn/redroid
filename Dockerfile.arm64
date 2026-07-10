@@ -33,8 +33,7 @@ RUN mkdir -p runtime && \
 # Main image - redroid base for Android 13 (64-bit only)
 FROM redroid/redroid:13.0.0_64only-latest
 
-# Preinstall Magisk as a system app and keep a copy in /tmp for adb-based checks.
-COPY --from=builder /magisk/magisk.apk /system/app/Magisk/Magisk.apk
+# Keep the Magisk APK in /tmp so it can be installed as a user app at runtime.
 COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
 COPY --from=builder /magisk/runtime/ /data/adb/magisk/
 
@@ -46,7 +45,7 @@ EXPOSE 5555
 
 # Labels
 LABEL org.opencontainers.image.title="Redroid 13 64-bit only with Magisk (ARM64)"
-LABEL org.opencontainers.image.description="Android 13 64-bit only with Magisk preinstalled and APK included at /tmp/magisk.apk"
+LABEL org.opencontainers.image.description="Android 13 64-bit only with Magisk runtime staged and APK included at /tmp/magisk.apk"
 LABEL org.opencontainers.image.version="13.0.0"
 LABEL org.opencontainers.image.architecture="arm64"
 LABEL magisk.included="true"
