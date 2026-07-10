@@ -18,7 +18,7 @@ dump_diagnostics() {
   docker ps -a --filter "name=${container_name}" >&2 || true
   echo "container logs:" >&2
   docker logs "$container_name" >&2 || true
-  adb -s "$adb_serial" shell ls -ld /data/adb /data/adb/magisk /data/adb/modules /debug_ramdisk /debug_ramdisk/.magisk 2>&1 >&2 || true
+  adb -s "$adb_serial" shell ls -ld /data/adb /data/adb/magisk /data/adb/modules /debug_ramdisk /debug_ramdisk/.magisk /debug_ramdisk/.magisk/device /debug_ramdisk/.magisk/device/socket 2>&1 >&2 || true
   adb -s "$adb_serial" shell ls -ld /data/user/0/com.topjohnwu.magisk /data/user_de/0/com.topjohnwu.magisk 2>&1 >&2 || true
   adb -s "$adb_serial" shell cat /cache/redroid-magisk-setup.log 2>&1 >&2 || true
   adb -s "$adb_serial" shell /data/adb/magisk/magisk -v 2>&1 >&2 || true
