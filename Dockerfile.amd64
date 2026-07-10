@@ -5,46 +5,23 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Download Magisk
+# Download Magisk with retry logic
 WORKDIR /magisk
-RUN MAGISK_VERSION=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/') && \
+RUN curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest > release.json && \
+    MAGISK_VERSION=$(grep '"tag_name":' release.json | sed -E 's/.*"v([^"]+)".*/\1/') && \
     echo "Downloading Magisk version: ${MAGISK_VERSION}" && \
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v${MAGISK_VERSION}/Magisk-v${MAGISK_VERSION}.apk" || \
-    wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk-latest.apk"
-
-# Extract Magisk binaries
-RUN unzip -o magisk.apk 'lib/x86_64/*' -d extracted || true && \
-    mkdir -p binaries && \
-    if [ -d extracted/lib/x86_64 ]; then \
-      cp extracted/lib/x86_64/* binaries/ || true; \
-    fi && \
-    touch binaries/.keep
+    (echo "Fallback to direct latest download" && \
+     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk")
 
 # Main image - redroid base for Android 13
 FROM redroid/redroid:13.0.0-latest
 
-# Copy Magisk APK
-COPY --from=builder /magisk/magisk.apk /magisk.apk
-
-# Copy Magisk binaries if available
-COPY --from=builder /magisk/binaries /magisk-bin
-
-# Create setup script that will be run manually or via adb
-RUN echo '#!/system/bin/sh' > /setup-magisk.sh && \
-    echo 'echo "Setting up Magisk..."' >> /setup-magisk.sh && \
-    echo 'mkdir -p /data/local/tmp /data/adb/magisk /data/adb/modules' >> /setup-magisk.sh && \
-    echo 'cp /magisk.apk /data/local/tmp/magisk.apk' >> /setup-magisk.sh && \
-    echo 'chmod 644 /data/local/tmp/magisk.apk' >> /setup-magisk.sh && \
-    echo 'if [ -d /magisk-bin ]; then' >> /setup-magisk.sh && \
-    echo '  cp /magisk-bin/* /data/adb/magisk/ 2>/dev/null || true' >> /setup-magisk.sh && \
-    echo 'fi' >> /setup-magisk.sh && \
-    echo 'pm install -r /data/local/tmp/magisk.apk' >> /setup-magisk.sh && \
-    echo 'echo "Magisk setup completed. APK installed."' >> /setup-magisk.sh && \
-    chmod +x /setup-magisk.sh
+# Copy Magisk APK to /tmp (which should be writable)
+COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
 
 # Set environment variables for ARM translation
 ENV MAGISK_VER=latest
@@ -55,7 +32,7 @@ EXPOSE 5555
 
 # Labels
 LABEL org.opencontainers.image.title="Redroid 13 with Magisk (AMD64 with ARM64 translation)"
-LABEL org.opencontainers.image.description="Android 13 in container with Magisk for AMD64. Run /setup-magisk.sh after boot to install."
+LABEL org.opencontainers.image.description="Android 13 with Magisk APK included at /tmp/magisk.apk"
 LABEL org.opencontainers.image.version="13.0.0"
 LABEL org.opencontainers.image.architecture="amd64"
 LABEL magisk.included="true"

@@ -231,30 +231,21 @@ jobs:
             adb -s localhost:5555 shell getprop ro.build.version.release || true
 
             # Check if Magisk APK exists in the image
-            if adb -s localhost:5555 shell "[ -f /magisk.apk ] && echo exists" 2>/dev/null | grep -q exists; then
-              echo "✓ Magisk APK found at /magisk.apk"
-              adb -s localhost:5555 shell ls -lh /magisk.apk || true
+            if adb -s localhost:5555 shell "[ -f /tmp/magisk.apk ] && echo exists" 2>/dev/null | grep -q exists; then
+              echo "✓ Magisk APK found at /tmp/magisk.apk"
+              adb -s localhost:5555 shell ls -lh /tmp/magisk.apk || true
 
-              # Check if setup script exists
-              if adb -s localhost:5555 shell "[ -f /setup-magisk.sh ] && echo exists" 2>/dev/null | grep -q exists; then
-                echo "✓ Magisk setup script found"
+              # Copy to /data and install
+              echo "Setting up Magisk..."
+              adb -s localhost:5555 shell "mkdir -p /data/local/tmp && cp /tmp/magisk.apk /data/local/tmp/" || true
 
-                # Run the setup script to install Magisk
-                echo "Running Magisk setup script..."
-                adb -s localhost:5555 shell "/setup-magisk.sh" || echo "Setup script execution (may require full Android boot)"
+              # Try to install via adb
+              echo "Installing Magisk via adb..."
+              adb -s localhost:5555 install /tmp/magisk.apk || echo "Magisk installation (may require full Android boot)"
 
-                # Verify installation
-                echo "Checking if Magisk was installed..."
-                adb -s localhost:5555 shell pm list packages | grep magisk || echo "Magisk package check"
-
-                # Check if APK was copied to /data
-                if adb -s localhost:5555 shell "[ -f /data/local/tmp/magisk.apk ] && echo exists" 2>/dev/null | grep -q exists; then
-                  echo "✓ Magisk APK copied to /data/local/tmp/"
-                fi
-              else
-                echo "✗ Magisk setup script not found"
-                exit 1
-              fi
+              # Verify installation
+              echo "Checking if Magisk was installed..."
+              adb -s localhost:5555 shell pm list packages | grep magisk || echo "Magisk package check"
             else
               echo "✗ Magisk APK not found in container image"
               exit 1
