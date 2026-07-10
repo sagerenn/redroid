@@ -46,6 +46,38 @@ WORKDIR /native-bridge
 RUN curl -fsSL https://raw.githubusercontent.com/zhouziyang/libndk_translation/master/libndk_translation-12.0.0.tar \
     | tar -xf -
 
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS tools
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    xz-utils \
+    tar \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tools
+
+RUN mkdir -p android/x86_64 android/arm64 && \
+    curl -fsSL https://github.com/frida/frida/releases/download/17.15.4/frida-server-17.15.4-android-x86_64.xz \
+    | xz -d > android/x86_64/frida-server && \
+    curl -fsSL https://github.com/gojue/ecapture/releases/download/v2.5.1/ecapture-v2.5.1-android-amd64.tar.gz \
+    | tar -xz -C android/x86_64 --strip-components=1 && \
+    curl -fsSL https://github.com/phudev95/magisk-a64dbg/archive/refs/heads/master.tar.gz \
+    | tar -xz -C /tmp && \
+    cp /tmp/magisk-a64dbg-master/files/a64dbg-server-x86_64/lldb-server android/x86_64/lldb-server && \
+    curl -fsSL https://github.com/frida/frida/releases/download/17.15.4/frida-server-17.15.4-android-arm64.xz \
+    | xz -d > android/arm64/frida-server && \
+    curl -fsSL https://github.com/gojue/ecapture/releases/download/v2.5.1/ecapture-v2.5.1-android-arm64.tar.gz \
+    | tar -xz -C android/arm64 --strip-components=1 && \
+    curl -fsSL https://github.com/LLeavesG/eBPFDexDumper/releases/download/v1.1.1/eBPFDexDumper-arm64 \
+    -o android/arm64/eBPFDexDumper && \
+    curl -fsSL https://github.com/SeeFlowerX/stackplz/releases/download/v3.0.3/stackplz \
+    -o android/arm64/stackplz && \
+    cp /tmp/magisk-a64dbg-master/files/a64dbg-server-arm64/lldb-server android/arm64/lldb-server && \
+    chmod 755 android/x86_64/* android/arm64/* && \
+    rm -rf /tmp/magisk-a64dbg-master
+
 # Main image - redroid base for Android 13
 FROM redroid/redroid:13.0.0-latest
 
@@ -65,6 +97,8 @@ COPY --from=magisk /magisk/magisk.apk /tmp/magisk.apk
 COPY --from=magisk /magisk/runtime/ /system/etc/redroid/magisk/
 COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
 COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
+COPY --from=tools /tools/android/x86_64/ /data/local/tmp/tools/x86_64/
+COPY --from=tools /tools/android/arm64/ /data/local/tmp/tools/arm64/
 
 # Set environment variables for ARM translation
 ENV MAGISK_VER=latest

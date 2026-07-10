@@ -36,12 +36,18 @@ require_path /system/etc/redroid/magisk/magisk
 require_path /system/etc/redroid/magisk/magiskboot
 require_path /system/etc/redroid/magisk/magiskinit
 require_path /system/etc/redroid/magisk/magiskpolicy
+require_path /data/local/tmp/tools/arm64/frida-server
+require_path /data/local/tmp/tools/arm64/ecapture
+require_path /data/local/tmp/tools/arm64/lldb-server
 
 if [[ $arch == amd64 ]]; then
   require_path /system/lib64/libndk_translation.so
   require_path /system/lib64/libnb.so
   require_path /system/bin/arm64/linker64
   require_path /system/etc/binfmt_misc/arm64_exe
+  require_path /data/local/tmp/tools/x86_64/frida-server
+  require_path /data/local/tmp/tools/x86_64/ecapture
+  require_path /data/local/tmp/tools/x86_64/lldb-server
 fi
 
 echo "image layout verified for $image_ref ($arch)"
