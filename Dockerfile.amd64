@@ -70,6 +70,8 @@ RUN mkdir -p android/x86_64 android/arm64 && \
     | xz -d > android/arm64/frida-server && \
     curl -fsSL https://github.com/gojue/ecapture/releases/download/v2.5.1/ecapture-v2.5.1-android-arm64.tar.gz \
     | tar -xz -C android/arm64 --strip-components=1 && \
+    curl -fsSL https://github.com/ShinoLeah/eDBG/releases/download/v2.3.0/eDBG_v2.3.0 \
+    -o android/arm64/eDBG && \
     curl -fsSL https://github.com/LLeavesG/eBPFDexDumper/releases/download/v1.1.1/eBPFDexDumper-arm64 \
     -o android/arm64/eBPFDexDumper && \
     curl -fsSL https://github.com/SeeFlowerX/stackplz/releases/download/v3.0.3/stackplz \
