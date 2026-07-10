@@ -65,12 +65,21 @@ until [[ $(adb -s "$adb_serial" shell getprop sys.boot_completed 2>/dev/null | t
   sleep 5
 done
 
+until adb -s "$adb_serial" shell test -d /data/adb/modules 2>/dev/null; do
+  if (( SECONDS >= deadline )); then
+    echo "magisk bootstrap did not create /data/adb/modules" >&2
+    exit 1
+  fi
+  sleep 5
+done
+
 adb -s "$adb_serial" root >/dev/null 2>&1 || true
 sleep 2
 adb -s "$adb_serial" wait-for-device
 
 adb -s "$adb_serial" shell getprop ro.build.version.release
 adb -s "$adb_serial" shell id | grep -q 'uid=0'
+adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 
 magisk_pkg='com.topjohnwu.magisk'
 magisk_activity='com.topjohnwu.magisk.ui.MainActivity'
