@@ -137,6 +137,7 @@ vector_module_id='zygisk_vector'
 adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
 adb -s "$adb_serial" shell pm path "$magisk_source_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell pm install -r /tmp/magisk-manager.apk
+adb -s "$adb_serial" shell /data/adb/magisk/magisk --sqlite "INSERT OR REPLACE INTO strings (key,value) VALUES('requester','${magisk_pkg}')"
 for perm in \
   android.permission.POST_NOTIFICATIONS \
   android.permission.READ_EXTERNAL_STORAGE \
