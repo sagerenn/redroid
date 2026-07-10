@@ -232,6 +232,12 @@ if ! wait_for_ui_match 5 'Flashing|Done|Failed|Installation|Installing' 'Magisk 
     tap_ui_node 'text="Install from storage"|content-desc="Install from storage"' 'Magisk install-from-storage button retry'
     wait_for_ui_match 20 'text="vector-module.zip"|package="com.android.documentsui"|package="com.google.android.documentsui"' 'Android file picker'
   fi
+  if ! wait_for_ui_match 3 'text="vector-module.zip"' 'Vector module picker item'; then
+    tap_ui_node 'content-desc="Show roots"|content-desc="Navigate up"' 'DocumentsUI roots drawer'
+    wait_for_ui_match 10 'text="Downloads"|text="Download"|text="Documents"' 'DocumentsUI roots list'
+    tap_ui_node 'text="Downloads"|text="Download"|text="Documents"' 'DocumentsUI downloads root'
+    wait_for_ui_match 20 'text="vector-module.zip"' 'Vector module picker item'
+  fi
   tap_ui_node 'text="vector-module.zip"' 'Vector module file picker item'
   wait_for_ui_match 20 'Confirm|vector-module.zip|OK' 'Magisk module install confirmation'
   tap_ui_node 'text="OK"|text="Install"|text="INSTALL"' 'Magisk module install confirmation button'
