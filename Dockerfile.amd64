@@ -62,7 +62,7 @@ COPY --from=nativebridge /native-bridge/system/lib64/libnb.so /system/lib64/libn
 
 # Keep the Magisk APK in /tmp so it can be installed as a user app at runtime.
 COPY --from=magisk /magisk/magisk.apk /tmp/magisk.apk
-COPY --from=magisk /magisk/runtime/ /data/adb/magisk/
+COPY --from=magisk /magisk/runtime/ /system/etc/redroid/magisk/
 COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
 COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
 

@@ -2,15 +2,29 @@
 
 set -eu
 
+LOG_FILE=/cache/redroid-magisk-setup.log
+mkdir -p /cache 2>/dev/null || true
+exec >>"$LOG_FILE" 2>&1
+
+echo "[redroid-magisk-setup] start"
+
 MARKER=/data/adb/magisk/.redroid_bootstrapped
+SRC_DIR=/system/etc/redroid/magisk
 
 if [ -f "$MARKER" ]; then
+  echo "[redroid-magisk-setup] already bootstrapped"
   exit 0
 fi
 
+mkdir -p /data/adb/magisk /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
+cp -af "$SRC_DIR"/. /data/adb/magisk/
+
 cd /data/adb/magisk
 
-chmod 755 busybox magisk magiskboot magiskinit magiskpolicy module_installer.sh
+chmod 755 busybox magisk magiskboot magiskinit magiskpolicy module_installer.sh || true
+if [ -f magisk32 ]; then
+  chmod 755 magisk32
+fi
 
 if ! grep -q ' /cache ' /proc/mounts; then
   mount -t tmpfs -o mode=0755 tmpfs /cache
@@ -71,3 +85,4 @@ mkdir -p /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
 "$MAGISKTMP/magisk" --boot-complete >/dev/null 2>&1 || true
 
 touch "$MARKER"
+echo "[redroid-magisk-setup] done"

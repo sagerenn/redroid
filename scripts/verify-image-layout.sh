@@ -26,14 +26,16 @@ require_path() {
 }
 
 require_path /tmp/magisk.apk
-require_path /data/adb/magisk/util_functions.sh
-require_path /data/adb/magisk/boot_patch.sh
-require_path /data/adb/magisk/module_installer.sh
-require_path /data/adb/magisk/busybox
-require_path /data/adb/magisk/magisk
-require_path /data/adb/magisk/magiskboot
-require_path /data/adb/magisk/magiskinit
-require_path /data/adb/magisk/magiskpolicy
+require_path /system/etc/redroid/redroid-magisk-setup.sh
+require_path /system/etc/init/redroid-magisk.rc
+require_path /system/etc/redroid/magisk/util_functions.sh
+require_path /system/etc/redroid/magisk/boot_patch.sh
+require_path /system/etc/redroid/magisk/module_installer.sh
+require_path /system/etc/redroid/magisk/busybox
+require_path /system/etc/redroid/magisk/magisk
+require_path /system/etc/redroid/magisk/magiskboot
+require_path /system/etc/redroid/magisk/magiskinit
+require_path /system/etc/redroid/magisk/magiskpolicy
 
 if [[ $arch == amd64 ]]; then
   require_path /system/lib64/libndk_translation.so
