@@ -32,6 +32,41 @@ wait_for_shell_test() {
   done
 }
 
+ensure_preinit_device() {
+  local preinit_node="$MAGISKTMP/.magisk/device/preinit"
+  local preinit_output target major minor
+
+  preinit_output=$(MAKEDEV=1 "$MAGISKTMP/magisk" --preinit-device 2>&1 || true)
+  if [ -n "$preinit_output" ]; then
+    echo "[redroid-magisk-setup] preinit-device: $preinit_output"
+  fi
+
+  if [ -b "$preinit_node" ]; then
+    return 0
+  fi
+
+  for target in /data /cache /metadata /persist /mnt/vendor/persist; do
+    set -- $(awk -v target="$target" '$4 == "/" && $5 == target { split($3, dev, ":"); print dev[1], dev[2]; exit }' /proc/self/mountinfo 2>/dev/null)
+    if [ $# -ne 2 ]; then
+      continue
+    fi
+
+    major=$1
+    minor=$2
+    rm -f "$preinit_node"
+    if mknod "$preinit_node" b "$major" "$minor" >/dev/null 2>&1; then
+      chmod 600 "$preinit_node" >/dev/null 2>&1 || true
+      chown 0:0 "$preinit_node" >/dev/null 2>&1 || true
+      restorecon "$preinit_node" >/dev/null 2>&1 || true
+      echo "[redroid-magisk-setup] fallback preinit device ${major}:${minor} from ${target}"
+      return 0
+    fi
+  done
+
+  echo "[redroid-magisk-setup] unable to create preinit device"
+  return 1
+}
+
 prepare_magisk_manager_app() {
   local ce_dir=/data/user/0/$MAGISK_PKG
   local de_dir=/data/user_de/0/$MAGISK_PKG
@@ -150,7 +185,7 @@ ln -sf ./magisk "$MAGISKTMP/resetprop"
 ln -sf ./magiskpolicy "$MAGISKTMP/supolicy"
 
 export MAGISKTMP
-MAKEDEV=1 "$MAGISKTMP/magisk" --preinit-device >/dev/null 2>&1 || true
+ensure_preinit_device || true
 echo "[redroid-magisk-setup] preinit done"
 
 RULESCMD=

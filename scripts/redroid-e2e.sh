@@ -18,7 +18,7 @@ dump_diagnostics() {
   docker ps -a --filter "name=${container_name}" >&2 || true
   echo "container logs:" >&2
   docker logs "$container_name" >&2 || true
-  adb -s "$adb_serial" shell ls -ld /data/adb /data/adb/magisk /data/adb/modules /debug_ramdisk /debug_ramdisk/.magisk /debug_ramdisk/.magisk/device /debug_ramdisk/.magisk/device/socket 2>&1 >&2 || true
+  adb -s "$adb_serial" shell ls -ld /data/adb /data/adb/magisk /data/adb/modules /debug_ramdisk /debug_ramdisk/.magisk /debug_ramdisk/.magisk/device /debug_ramdisk/.magisk/device/socket /debug_ramdisk/.magisk/device/preinit /debug_ramdisk/.magisk/preinit 2>&1 >&2 || true
   adb -s "$adb_serial" shell ls -ld /data/user/0/com.topjohnwu.magisk /data/user_de/0/com.topjohnwu.magisk 2>&1 >&2 || true
   adb -s "$adb_serial" shell cat /cache/redroid-magisk-setup.log 2>&1 >&2 || true
   adb -s "$adb_serial" shell /data/adb/magisk/magisk -v 2>&1 >&2 || true
@@ -144,6 +144,7 @@ adb -s "$adb_serial" wait-for-device
 adb -s "$adb_serial" shell getprop ro.build.version.release
 adb -s "$adb_serial" shell id | grep -q 'uid=0'
 adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
+wait_for_device_test 30 'Magisk preinit device' "test -b /debug_ramdisk/.magisk/device/preinit"
 
 magisk_pkg='com.topjohnwu.magisk'
 magisk_flash_action='com.topjohnwu.magisk.intent.FLASH'
