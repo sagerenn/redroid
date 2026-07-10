@@ -19,6 +19,7 @@ dump_diagnostics() {
   echo "container logs:" >&2
   docker logs "$container_name" >&2 || true
   adb -s "$adb_serial" shell ls -ld /data/adb /data/adb/magisk /data/adb/modules /debug_ramdisk /debug_ramdisk/.magisk /debug_ramdisk/.magisk/device /debug_ramdisk/.magisk/device/socket /debug_ramdisk/.magisk/device/preinit /debug_ramdisk/.magisk/preinit 2>&1 >&2 || true
+  adb -s "$adb_serial" shell pm path com.topjohnwu.magisk 2>&1 >&2 || true
   adb -s "$adb_serial" shell ls -ld /data/user/0/com.topjohnwu.magisk /data/user_de/0/com.topjohnwu.magisk 2>&1 >&2 || true
   adb -s "$adb_serial" shell cat /cache/redroid-magisk-setup.log 2>&1 >&2 || true
   adb -s "$adb_serial" shell /data/adb/magisk/magisk -v 2>&1 >&2 || true
@@ -155,7 +156,9 @@ yuntai_pkg='com.ctyun.oa'
 yuntai_activity='com.ctg.itrdc.mf.yimu.modules.splash.ui.YunTaiSplashActivity'
 vector_module_id='zygisk_vector'
 
-adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
+if ! adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'; then
+  adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
+fi
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
 prepare_magisk_user_app
 
