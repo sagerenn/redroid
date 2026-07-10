@@ -141,6 +141,10 @@ mkdir -p "$MAGISKTMP/.magisk/busybox"
 cp -af busybox "$MAGISKTMP/.magisk/busybox/busybox"
 chmod 755 "$MAGISKTMP/.magisk/busybox/busybox"
 
+for target in /system/bin/magisk /system/bin/su /system/xbin/su; do
+  mount -o bind "$MAGISKTMP/magisk" "$target" >/dev/null 2>&1 || true
+done
+
 ln -sf ./magisk "$MAGISKTMP/su"
 ln -sf ./magisk "$MAGISKTMP/resetprop"
 ln -sf ./magiskpolicy "$MAGISKTMP/supolicy"
