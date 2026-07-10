@@ -219,7 +219,7 @@ adb -s "$adb_serial" push /tmp/vector-module.zip /sdcard/Download/vector-module.
 
 adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramdisk
 
-tap_ui_node 'content-desc="Install from storage"' 'Magisk install-from-storage button'
+tap_ui_node 'text="Install from storage"|content-desc="Install from storage"' 'Magisk install-from-storage button'
 wait_for_ui_match 20 'text="vector-module.zip"|package="com.android.documentsui"|package="com.google.android.documentsui"' 'Android file picker'
 tap_ui_node 'text="vector-module.zip"' 'Vector module file picker item'
 wait_for_ui_match 20 'Confirm|vector-module.zip|OK' 'Magisk module install confirmation'
