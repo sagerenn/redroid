@@ -123,6 +123,7 @@ if [ ! -d "$MAGISKTMP/.magisk/worker/.tmpfs_ready" ]; then
   mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP/.magisk/worker"
   mkdir -p "$MAGISKTMP/.magisk/worker/.tmpfs_ready"
 fi
+chmod 711 "$MAGISKTMP/.magisk" "$MAGISKTMP/.magisk/device" >/dev/null 2>&1 || true
 touch "$MAGISKTMP/.magisk/config"
 echo "[redroid-magisk-setup] worker ready"
 
