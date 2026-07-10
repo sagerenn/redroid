@@ -100,7 +100,9 @@ jobs:
 
       - name: Pull Docker image
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }} || echo "Image not found, will build locally for testing"
+          # Wait a bit for image to be fully available after push
+          sleep 5
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }}
 
       - name: Test Docker image
         run: |
