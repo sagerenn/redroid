@@ -1,0 +1,58 @@
+FROM ubuntu:22.04 AS builder
+
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    unzip \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download Magisk
+WORKDIR /magisk
+RUN MAGISK_VERSION=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/') && \
+    echo "Downloading Magisk version: ${MAGISK_VERSION}" && \
+    wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v${MAGISK_VERSION}/Magisk-v${MAGISK_VERSION}.apk" || \
+    wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk-latest.apk"
+
+# Main image - redroid base for Android 13
+FROM redroid/redroid:13.0.0-latest
+
+# Copy Magisk
+COPY --from=builder /magisk/magisk.apk /data/local/tmp/magisk.apk
+
+# Install necessary tools
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    adb \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up Magisk installation script
+RUN mkdir -p /data/adb/magisk && \
+    echo '#!/system/bin/sh' > /init.magisk.rc && \
+    echo 'export PATH=/data/adb/magisk:$PATH' >> /init.magisk.rc && \
+    chmod +x /init.magisk.rc
+
+# Environment variables for redroid
+ENV REDROID_GPU_MODE=auto
+ENV REDROID_WIDTH=1080
+ENV REDROID_HEIGHT=1920
+ENV REDROID_DPI=480
+
+# Expose ADB port
+EXPOSE 5555
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD pgrep -f "redroid" || exit 1
+
+# Labels
+LABEL org.opencontainers.image.title="Redroid 13 with Magisk (ARM64)"
+LABEL org.opencontainers.image.description="Android 13 in container with Magisk support for ARM64"
+LABEL org.opencontainers.image.version="13.0.0"
+LABEL org.opencontainers.image.architecture="arm64"
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
