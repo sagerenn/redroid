@@ -137,16 +137,31 @@ vector_module_id='zygisk_vector'
 adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
 adb -s "$adb_serial" shell pm path "$magisk_source_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell pm install -r /tmp/magisk-manager.apk
+adb -s "$adb_serial" shell <<EOF
+set -eu
+magisk_bin=/data/adb/magisk/magisk
+hidden_pkg='${magisk_pkg}'
+source_apk=/tmp/magisk.apk
 requester_sql="INSERT OR REPLACE INTO strings (key,value) VALUES('requester','${magisk_pkg}')"
-requester_cmd=$(printf '%q' "/data/adb/magisk/magisk --sqlite \"${requester_sql}\"")
-adb -s "$adb_serial" shell "sh -c ${requester_cmd}"
-magisk_hidden_uid=$(adb -s "$adb_serial" shell dumpsys package "$magisk_pkg" \
-  | tr -d '\r' | sed -n 's/.*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)
-[[ $magisk_hidden_uid =~ ^[0-9]+$ ]]
-magisk_hidden_data_dir="/data/user_de/0/${magisk_pkg}"
-adb -s "$adb_serial" shell "mkdir -p ${magisk_hidden_data_dir}/dyn"
-adb -s "$adb_serial" shell "cp /tmp/magisk.apk ${magisk_hidden_data_dir}/dyn/current.apk"
-adb -s "$adb_serial" shell "chown ${magisk_hidden_uid}:${magisk_hidden_uid} ${magisk_hidden_data_dir}/dyn/current.apk"
+
+"$magisk_bin" --sqlite "$requester_sql" >/dev/null
+"$magisk_bin" --sqlite "SELECT value FROM strings WHERE key='requester'" | grep -qx "value=${magisk_pkg}"
+
+hidden_uid=
+hidden_uid=$(dumpsys package "$hidden_pkg" | sed -n 's/.*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)
+hidden_data_dir=
+hidden_data_dir=$(dumpsys package "$hidden_pkg" | sed -n 's/.*deviceProtectedDataDir=\([^ ]*\).*/\1/p' | head -n 1)
+
+[ -n "$hidden_uid" ]
+[ -n "$hidden_data_dir" ]
+
+mkdir -p "$hidden_data_dir/dyn"
+cp "$source_apk" "$hidden_data_dir/dyn/current.apk"
+chown -R "$hidden_uid:$hidden_uid" "$hidden_data_dir/dyn"
+chmod 600 "$hidden_data_dir/dyn/current.apk"
+restorecon -R "$hidden_data_dir" >/dev/null 2>&1 || true
+EOF
+
 for perm in \
   android.permission.POST_NOTIFICATIONS \
   android.permission.READ_EXTERNAL_STORAGE \
@@ -155,6 +170,7 @@ do
   adb -s "$adb_serial" shell pm grant "$magisk_source_pkg" "$perm" >/dev/null 2>&1 || true
   adb -s "$adb_serial" shell pm grant "$magisk_pkg" "$perm" >/dev/null 2>&1 || true
 done
+
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
 magisk_activity=$(adb -s "$adb_serial" shell cmd package resolve-activity --brief "$magisk_pkg" \
   | tr -d '\r' | tail -n 1)
