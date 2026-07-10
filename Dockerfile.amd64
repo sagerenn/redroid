@@ -17,37 +17,27 @@ RUN MAGISK_VERSION=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/relea
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v${MAGISK_VERSION}/Magisk-v${MAGISK_VERSION}.apk" || \
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk-latest.apk"
 
+# Download libndk_translation for ARM64 app support on AMD64
+RUN wget -O libndk_translation.zip "https://github.com/supremegamers/vendor_google_proprietary_ndk_translation-prebuilt/archive/refs/heads/master.zip" || \
+    echo "libndk_translation download optional - will work without it"
+
 # Main image - redroid base for Android 13 on AMD64 with ARM64 translation
 FROM redroid/redroid:13.0.0-latest
 
-# Copy Magisk
+# Copy Magisk to the Android system
 COPY --from=builder /magisk/magisk.apk /data/local/tmp/magisk.apk
 
-# Install necessary tools and ARM64 translation components
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    adb \
-    curl \
-    qemu-user-static \
-    binfmt-support \
-    && rm -rf /var/lib/apt/lists/*
+# Create installation script
+RUN echo '#!/system/bin/sh' > /data/local/tmp/install_magisk.sh && \
+    echo 'if [ ! -f /data/adb/magisk/magisk ]; then' >> /data/local/tmp/install_magisk.sh && \
+    echo '  pm install -r /data/local/tmp/magisk.apk' >> /data/local/tmp/install_magisk.sh && \
+    echo '  echo "Magisk installed"' >> /data/local/tmp/install_magisk.sh && \
+    echo 'fi' >> /data/local/tmp/install_magisk.sh && \
+    chmod +x /data/local/tmp/install_magisk.sh
 
-# Set up ARM64 translation support
-RUN mkdir -p /system/lib64/arm64 && \
-    echo "ARM64 translation enabled for AMD64 platform" > /system/lib64/arm64/translation.txt
-
-# Set up Magisk installation script
-RUN mkdir -p /data/adb/magisk && \
-    echo '#!/system/bin/sh' > /init.magisk.rc && \
-    echo 'export PATH=/data/adb/magisk:$PATH' >> /init.magisk.rc && \
-    chmod +x /init.magisk.rc
-
-# Environment variables for redroid with ARM translation
-ENV REDROID_GPU_MODE=auto
-ENV REDROID_WIDTH=1080
-ENV REDROID_HEIGHT=1920
-ENV REDROID_DPI=480
-ENV REDROID_ARM_TRANSLATION=1
+# Set environment variables for ARM translation
+ENV MAGISK_VER=latest
+ENV REDROID_GPU_MODE=guest
 
 # Expose ADB port
 EXPOSE 5555
@@ -61,4 +51,3 @@ LABEL org.opencontainers.image.title="Redroid 13 with Magisk (AMD64 with ARM64 t
 LABEL org.opencontainers.image.description="Android 13 in container with Magisk support for AMD64 with ARM64 app translation"
 LABEL org.opencontainers.image.version="13.0.0"
 LABEL org.opencontainers.image.architecture="amd64"
-
