@@ -67,6 +67,27 @@ wait_for_ui_match() {
   done
 }
 
+tap_ui_node() {
+  local regex=$1
+  local description=$2
+  local local_deadline=$((SECONDS + 20))
+  local ui_dump=''
+  local bounds=''
+  local x1 y1 x2 y2
+
+  until ui_dump=$(dump_ui) && bounds=$(sed -n "s/.*${regex}.*bounds=\"\\[\\([0-9][0-9]*\\),\\([0-9][0-9]*\\)\\]\\[\\([0-9][0-9]*\\),\\([0-9][0-9]*\\)\\]\".*/\\1 \\2 \\3 \\4/p" <<<"$ui_dump" | head -n 1) && [[ -n $bounds ]]; do
+    if (( SECONDS >= local_deadline )); then
+      echo "timed out locating ${description}" >&2
+      printf '%s\n' "$ui_dump" >&2
+      return 1
+    fi
+    sleep 2
+  done
+
+  read -r x1 y1 x2 y2 <<<"$bounds"
+  adb -s "$adb_serial" shell input tap "$(((x1 + x2) / 2))" "$(((y1 + y2) / 2))"
+}
+
 prepare_magisk_user_app() {
   local app_mode
 
@@ -183,10 +204,10 @@ adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
 wait_for_ui_match 30 "resource-id=\"com.topjohnwu.magisk:id/home_magisk_installed_version\".*text=\"${magisk_version_regex} \\(${magisk_ver_code}\\)\"" 'active Magisk home card'
 
-adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity" --es "$magisk_section_key" superuser
+tap_ui_node 'resource-id="com.topjohnwu.magisk:id/superuserFragment"' 'Magisk Superuser tab'
 wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/superuserFragment"[^>]*selected="true"' 'Magisk Superuser section'
 
-adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity" --es "$magisk_section_key" modules
+tap_ui_node 'resource-id="com.topjohnwu.magisk:id/modulesFragment"' 'Magisk Modules tab'
 wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/module_list"|resource-id="com.topjohnwu.magisk:id/modulesFragment"[^>]*selected="true"' 'Magisk Modules section'
 
 curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
@@ -196,7 +217,6 @@ adb -s "$adb_serial" push /tmp/vector-module.zip /data/local/tmp/vector-module.z
 adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramdisk
 
 adb -s "$adb_serial" shell am start -W \
-  -S \
   -a "$magisk_flash_action" \
   --es flash_action flash \
   --es flash_uri file:///data/local/tmp/vector-module.zip \
