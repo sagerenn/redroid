@@ -6,6 +6,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
@@ -17,6 +18,17 @@ RUN curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest > rele
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v${MAGISK_VERSION}/Magisk-v${MAGISK_VERSION}.apk" || \
     (echo "Fallback to direct latest download" && \
      wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk")
+
+RUN mkdir -p runtime && \
+    unzip -p magisk.apk assets/util_functions.sh > runtime/util_functions.sh && \
+    unzip -p magisk.apk assets/boot_patch.sh > runtime/boot_patch.sh && \
+    unzip -p magisk.apk assets/module_installer.sh > runtime/module_installer.sh && \
+    unzip -p magisk.apk lib/x86_64/libbusybox.so > runtime/busybox && \
+    unzip -p magisk.apk lib/x86_64/libmagisk.so > runtime/magisk && \
+    unzip -p magisk.apk lib/x86_64/libmagiskboot.so > runtime/magiskboot && \
+    unzip -p magisk.apk lib/x86_64/libmagiskinit.so > runtime/magiskinit && \
+    unzip -p magisk.apk lib/x86_64/libmagiskpolicy.so > runtime/magiskpolicy && \
+    chmod 755 runtime/busybox runtime/magisk runtime/magiskboot runtime/magiskinit runtime/magiskpolicy runtime/module_installer.sh
 
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS nativebridge
 
@@ -49,6 +61,7 @@ COPY --from=nativebridge /native-bridge/system/lib64/libnb.so /system/lib64/libn
 # Preinstall Magisk as a system app and keep a copy in /tmp for adb-based checks.
 COPY --from=magisk /magisk/magisk.apk /system/app/Magisk/Magisk.apk
 COPY --from=magisk /magisk/magisk.apk /tmp/magisk.apk
+COPY --from=magisk /magisk/runtime/ /data/adb/magisk/
 
 # Set environment variables for ARM translation
 ENV MAGISK_VER=latest
