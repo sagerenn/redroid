@@ -124,8 +124,7 @@ adb -s "$adb_serial" shell getprop ro.build.version.release
 adb -s "$adb_serial" shell id | grep -q 'uid=0'
 adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 
-magisk_source_pkg='com.topjohnwu.magisk'
-magisk_pkg='repackaged.com.topjohnwu.magisk'
+magisk_pkg='com.topjohnwu.magisk'
 magisk_flash_action='com.topjohnwu.magisk.intent.FLASH'
 magisk_section_key='section'
 vector_manager_pkg='org.lsposed.manager'
@@ -135,42 +134,17 @@ yuntai_activity='com.ctg.itrdc.mf.yimu.modules.splash.ui.YunTaiSplashActivity'
 vector_module_id='zygisk_vector'
 
 adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
-adb -s "$adb_serial" shell pm path "$magisk_source_pkg" | grep -q '^package:'
-adb -s "$adb_serial" shell pm install -r /tmp/magisk-manager.apk
-adb -s "$adb_serial" shell <<EOF
-set -eu
-magisk_bin=/data/adb/magisk/magisk
-hidden_pkg='${magisk_pkg}'
-source_apk=/tmp/magisk.apk
-requester_sql="INSERT OR REPLACE INTO strings (key,value) VALUES('requester','${magisk_pkg}')"
-
-"$magisk_bin" --sqlite "$requester_sql" >/dev/null
-"$magisk_bin" --sqlite "SELECT value FROM strings WHERE key='requester'" | grep -qx "value=${magisk_pkg}"
-
-hidden_uid=
-hidden_uid=$(dumpsys package "$hidden_pkg" | sed -n 's/.*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)
-hidden_data_dir=
-hidden_data_dir=$(dumpsys package "$hidden_pkg" | sed -n 's/.*deviceProtectedDataDir=\([^ ]*\).*/\1/p' | head -n 1)
-
-[ -n "$hidden_uid" ]
-[ -n "$hidden_data_dir" ]
-
-mkdir -p "$hidden_data_dir/dyn"
-cp "$source_apk" "$hidden_data_dir/dyn/current.apk"
-chown -R "$hidden_uid:$hidden_uid" "$hidden_data_dir/dyn"
-chmod 600 "$hidden_data_dir/dyn/current.apk"
-restorecon -R "$hidden_data_dir" >/dev/null 2>&1 || true
-
-policy_sql="INSERT OR REPLACE INTO policies (uid,policy,until,logging,notification) VALUES(${hidden_uid},2,0,0,0)"
-"$magisk_bin" --sqlite "$policy_sql" >/dev/null
-EOF
+adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
+magisk_uid=$(adb -s "$adb_serial" shell dumpsys package "$magisk_pkg" \
+  | tr -d '\r' | sed -n 's/.*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)
+[[ $magisk_uid =~ ^[0-9]+$ ]]
+adb -s "$adb_serial" shell "/data/adb/magisk/magisk --sqlite \"INSERT OR REPLACE INTO policies (uid,policy,until,logging,notification) VALUES(${magisk_uid},2,0,0,0)\""
 
 for perm in \
   android.permission.POST_NOTIFICATIONS \
   android.permission.READ_EXTERNAL_STORAGE \
   android.permission.WRITE_EXTERNAL_STORAGE
 do
-  adb -s "$adb_serial" shell pm grant "$magisk_source_pkg" "$perm" >/dev/null 2>&1 || true
   adb -s "$adb_serial" shell pm grant "$magisk_pkg" "$perm" >/dev/null 2>&1 || true
 done
 
