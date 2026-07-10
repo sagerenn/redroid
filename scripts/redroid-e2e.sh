@@ -214,15 +214,16 @@ wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/module_list"|resource
 curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
 unzip -p /tmp/vector-module.zip manager.apk > /tmp/vector-manager.apk
 adb -s "$adb_serial" push /tmp/vector-module.zip /data/local/tmp/vector-module.zip >/dev/null
+adb -s "$adb_serial" shell mkdir -p /sdcard/Download
+adb -s "$adb_serial" push /tmp/vector-module.zip /sdcard/Download/vector-module.zip >/dev/null
 
 adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramdisk
 
-adb -s "$adb_serial" shell am start -W \
-  -a "$magisk_flash_action" \
-  -f 0x14000000 \
-  --es flash_action flash \
-  --es flash_uri file:///data/local/tmp/vector-module.zip \
-  "$magisk_activity"
+tap_ui_node 'content-desc="Install from storage"' 'Magisk install-from-storage button'
+wait_for_ui_match 20 'text="vector-module.zip"|package="com.android.documentsui"|package="com.google.android.documentsui"' 'Android file picker'
+tap_ui_node 'text="vector-module.zip"' 'Vector module file picker item'
+wait_for_ui_match 20 'Confirm|vector-module.zip|OK' 'Magisk module install confirmation'
+tap_ui_node 'text="OK"|text="Install"|text="INSTALL"' 'Magisk module install confirmation button'
 
 wait_for_ui_match 20 'Flashing|Done|Failed|Installation|Installing' 'Magisk flash screen'
 
