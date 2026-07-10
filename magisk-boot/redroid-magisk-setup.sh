@@ -57,7 +57,6 @@ echo "[redroid-magisk-setup] worker ready"
 for file in magisk magiskpolicy stub.apk; do
   if [ -f "$file" ]; then
     cp -af "$file" "$MAGISKTMP/$file"
-    cp -af "$file" /data/adb/magisk/$file
   fi
 done
 
