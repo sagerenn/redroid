@@ -147,10 +147,10 @@ adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
 
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" superuser
-wait_for_ui_match 20 'Superuser' 'Magisk Superuser section'
+wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/superuserFragment"[^>]*selected="true"' 'Magisk Superuser section'
 
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" modules
-wait_for_ui_match 20 'Install from storage|No module installed' 'Magisk Modules section'
+wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/module_list"|resource-id="com.topjohnwu.magisk:id/modulesFragment"[^>]*selected="true"' 'Magisk Modules section'
 
 curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
 unzip -p /tmp/vector-module.zip manager.apk > /tmp/vector-manager.apk
