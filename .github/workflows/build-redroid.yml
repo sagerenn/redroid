@@ -116,12 +116,12 @@ jobs:
           CONTAINER_ID=$(docker create --platform linux/${{ matrix.arch }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }})
           echo "Created container: $CONTAINER_ID"
 
-          # Try to copy Magisk APK to verify it exists
-          if docker cp $CONTAINER_ID:/data/local/tmp/magisk.apk ./magisk-${{ matrix.arch }}.apk 2>/dev/null; then
-            echo "✓ Magisk APK found in image"
+          # Try to copy Magisk APK from /tmp to verify it exists
+          if docker cp $CONTAINER_ID:/tmp/magisk.apk ./magisk-${{ matrix.arch }}.apk 2>/dev/null; then
+            echo "✓ Magisk APK found in image at /tmp/magisk.apk"
             ls -lh ./magisk-${{ matrix.arch }}.apk
           else
-            echo "✗ Magisk APK not found"
+            echo "✗ Magisk APK not found at /tmp/magisk.apk"
             exit 1
           fi
 
