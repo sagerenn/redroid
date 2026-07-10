@@ -1,0 +1,8 @@
+on property:sys.boot_completed=1
+    start redroid_magisk_setup
+
+service redroid_magisk_setup /system/bin/sh /system/etc/redroid/redroid-magisk-setup.sh
+    class late_start
+    user root
+    group root
+    oneshot

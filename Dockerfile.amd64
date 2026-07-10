@@ -23,12 +23,14 @@ RUN mkdir -p runtime && \
     unzip -p magisk.apk assets/util_functions.sh > runtime/util_functions.sh && \
     unzip -p magisk.apk assets/boot_patch.sh > runtime/boot_patch.sh && \
     unzip -p magisk.apk assets/module_installer.sh > runtime/module_installer.sh && \
+    unzip -p magisk.apk assets/stub.apk > runtime/stub.apk && \
     unzip -p magisk.apk lib/x86_64/libbusybox.so > runtime/busybox && \
     unzip -p magisk.apk lib/x86_64/libmagisk.so > runtime/magisk && \
+    unzip -p magisk.apk lib/x86/libmagisk.so > runtime/magisk32 && \
     unzip -p magisk.apk lib/x86_64/libmagiskboot.so > runtime/magiskboot && \
     unzip -p magisk.apk lib/x86_64/libmagiskinit.so > runtime/magiskinit && \
     unzip -p magisk.apk lib/x86_64/libmagiskpolicy.so > runtime/magiskpolicy && \
-    chmod 755 runtime/busybox runtime/magisk runtime/magiskboot runtime/magiskinit runtime/magiskpolicy runtime/module_installer.sh
+    chmod 755 runtime/busybox runtime/magisk runtime/magisk32 runtime/magiskboot runtime/magiskinit runtime/magiskpolicy runtime/module_installer.sh
 
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS nativebridge
 
@@ -61,6 +63,8 @@ COPY --from=nativebridge /native-bridge/system/lib64/libnb.so /system/lib64/libn
 # Keep the Magisk APK in /tmp so it can be installed as a user app at runtime.
 COPY --from=magisk /magisk/magisk.apk /tmp/magisk.apk
 COPY --from=magisk /magisk/runtime/ /data/adb/magisk/
+COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
+COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
 
 # Set environment variables for ARM translation
 ENV MAGISK_VER=latest
