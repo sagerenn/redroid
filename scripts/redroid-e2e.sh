@@ -76,7 +76,7 @@ tap_ui_node() {
   local match=''
   local x1 y1 x2 y2
 
-  until ui_dump=$(dump_ui) && match=$(grep -oE "${regex}[^>]*bounds=\"\\[[0-9]+,[0-9]+\\]\\[[0-9]+,[0-9]+\\]\"" <<<"$ui_dump" | head -n 1) && bounds=$(sed -E 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]"/\1 \2 \3 \4/' <<<"$match") && [[ -n $bounds ]]; do
+  until ui_dump=$(dump_ui) && match=$(grep -oE "(${regex})[^>]*bounds=\"\\[[0-9]+,[0-9]+\\]\\[[0-9]+,[0-9]+\\]\"" <<<"$ui_dump" | head -n 1) && bounds=$(sed -E 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]"/\1 \2 \3 \4/' <<<"$match") && [[ -n $bounds ]]; do
     if (( SECONDS >= local_deadline )); then
       echo "timed out locating ${description}" >&2
       printf '%s\n' "$ui_dump" >&2
