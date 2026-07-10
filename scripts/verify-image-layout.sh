@@ -26,6 +26,7 @@ require_path() {
 }
 
 require_path /tmp/magisk.apk
+require_path /tmp/magisk-manager.apk
 require_path /system/bin/magisk
 require_path /system/bin/su
 require_path /system/xbin/su
