@@ -82,9 +82,8 @@ FROM redroid/redroid:13.0.0_64only-latest
 COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
 COPY --from=builder /magisk/magisk-manager.apk /tmp/magisk-manager.apk
 COPY --from=builder /magisk/runtime/ /system/etc/redroid/magisk/
-COPY --from=builder /magisk/entrypoints/system/bin/magisk /system/bin/magisk
-COPY --from=builder /magisk/entrypoints/system/bin/su /system/bin/su
-COPY --from=builder /magisk/entrypoints/system/xbin/su /system/xbin/su
+COPY --from=builder /magisk/entrypoints/system/bin/ /system/bin/
+COPY --from=builder /magisk/entrypoints/system/xbin/ /system/xbin/
 COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
 COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
 COPY --from=tools /tools/android/arm64/ /data/local/tmp/tools/arm64/
