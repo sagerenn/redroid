@@ -176,6 +176,7 @@ Available now:
 
 - `frida-server`
 - `ecapture`
+- `eDBG` (`arm64` only)
 - `lldb-server`
 - `eBPFDexDumper` (`arm64` only)
 - `stackplz` (`arm64` only)
@@ -191,7 +192,7 @@ Notes:
 
 - `eBPFDexDumper` is only published upstream for `arm64`, so it is not staged into the `amd64` image.
 - `stackplz` is only published upstream as an `arm64` Android binary, so it is not staged into the `amd64` image.
-- `eDBG` is not bundled yet because the latest upstream release exposes host/Linux binaries instead of Android-targeted binaries.
+- `eDBG` is only staged into the `arm64` image because the current upstream release only exposes an Android `arm64` binary.
 
 ## Advanced Usage
 
