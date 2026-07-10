@@ -23,6 +23,11 @@ dump_diagnostics() {
   adb -s "$adb_serial" shell /data/adb/magisk/magisk -v 2>&1 >&2 || true
 }
 
+dump_ui() {
+  adb -s "$adb_serial" shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1 || true
+  adb -s "$adb_serial" shell cat /data/local/tmp/ui.xml 2>/dev/null || true
+}
+
 cleanup() {
   adb disconnect "$adb_serial" >/dev/null 2>&1 || true
   docker rm -f "$container_name" >/dev/null 2>&1 || true
@@ -87,6 +92,7 @@ adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 magisk_pkg='com.topjohnwu.magisk'
 magisk_activity='com.topjohnwu.magisk.ui.MainActivity'
 magisk_flash_action='com.topjohnwu.magisk.intent.FLASH'
+magisk_section_key='section'
 vector_manager_pkg='org.lsposed.manager'
 vector_manager_activity='org.lsposed.manager.ui.activity.MainActivity'
 yuntai_pkg='com.ctyun.oa'
@@ -94,9 +100,22 @@ yuntai_activity='com.ctg.itrdc.mf.yimu.modules.splash.ui.YunTaiSplashActivity'
 vector_module_id='zygisk_vector'
 
 adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
+for perm in \
+  android.permission.POST_NOTIFICATIONS \
+  android.permission.READ_EXTERNAL_STORAGE \
+  android.permission.WRITE_EXTERNAL_STORAGE
+do
+  adb -s "$adb_serial" shell pm grant "$magisk_pkg" "$perm" >/dev/null 2>&1 || true
+done
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
+
+adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" superuser
+dump_ui | grep -q 'Superuser'
+
+adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" modules
+dump_ui | grep -q 'Install from storage'
 
 curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
 unzip -p /tmp/vector-module.zip manager.apk > /tmp/vector-manager.apk
@@ -110,6 +129,8 @@ adb -s "$adb_serial" shell am start -W \
   --es flash_uri file:///data/local/tmp/vector-module.zip \
   "$magisk_pkg/$magisk_activity"
 
+dump_ui | grep -Eq 'Flashing|Done|Failure'
+
 adb -s "$adb_serial" shell test -d "/data/adb/modules_update/$vector_module_id"
 adb -s "$adb_serial" shell test -f "/data/adb/modules_update/$vector_module_id/module.prop"
 adb -s "$adb_serial" shell grep -q '^id=zygisk_vector$' "/data/adb/modules_update/$vector_module_id/module.prop"
@@ -118,6 +139,7 @@ adb -s "$adb_serial" install -r /tmp/vector-manager.apk
 adb -s "$adb_serial" shell pm path "$vector_manager_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell am start -W -n "$vector_manager_pkg/$vector_manager_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$vector_manager_pkg"
+dump_ui | grep -q 'LSPosed'
 
 adb -s "$adb_serial" install -r yuntai.apk
 adb -s "$adb_serial" shell pm path "$yuntai_pkg" | grep -q '^package:'
