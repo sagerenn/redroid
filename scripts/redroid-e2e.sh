@@ -86,6 +86,7 @@ adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 
 magisk_pkg='com.topjohnwu.magisk'
 magisk_activity='com.topjohnwu.magisk.ui.MainActivity'
+magisk_flash_action='com.topjohnwu.magisk.intent.FLASH'
 vector_manager_pkg='org.lsposed.manager'
 vector_manager_activity='org.lsposed.manager.ui.activity.MainActivity'
 yuntai_pkg='com.ctyun.oa'
@@ -101,17 +102,14 @@ curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
 unzip -p /tmp/vector-module.zip manager.apk > /tmp/vector-manager.apk
 adb -s "$adb_serial" push /tmp/vector-module.zip /data/local/tmp/vector-module.zip >/dev/null
 
-adb -s "$adb_serial" shell <<'EOF'
-set -e
-magisk_tmp=/debug_ramdisk
-mkdir -p "$magisk_tmp/.magisk/busybox" "$magisk_tmp/.magisk/worker" "$magisk_tmp/.magisk/preinit"
-touch "$magisk_tmp/.magisk/config"
-cp -af /data/adb/magisk/busybox "$magisk_tmp/.magisk/busybox/busybox"
-chmod 755 "$magisk_tmp/.magisk/busybox/busybox"
-EOF
-
 adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramdisk
-adb -s "$adb_serial" shell /data/adb/magisk/magisk --install-module /data/local/tmp/vector-module.zip
+
+adb -s "$adb_serial" shell am start -W \
+  -a "$magisk_flash_action" \
+  --es flash_action flash \
+  --es flash_uri file:///data/local/tmp/vector-module.zip \
+  "$magisk_pkg/$magisk_activity"
+
 adb -s "$adb_serial" shell test -d "/data/adb/modules_update/$vector_module_id"
 adb -s "$adb_serial" shell test -f "/data/adb/modules_update/$vector_module_id/module.prop"
 adb -s "$adb_serial" shell grep -q '^id=zygisk_vector$' "/data/adb/modules_update/$vector_module_id/module.prop"
