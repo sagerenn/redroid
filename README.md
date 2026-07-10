@@ -62,7 +62,7 @@ adb shell getprop ro.build.version.release
 The image now carries both the APK used for user-space installation and the runtime files used by the module installer:
 
 - APK mirror for manual installs/tests: `/tmp/magisk.apk`
-- Magisk app-visible CLI entrypoint: `/system/bin/magisk`
+- Magisk app-visible CLI entrypoints: `/system/bin/magisk`, `/system/bin/su`, `/system/xbin/su`
 - Runtime payload in the image: `/system/etc/redroid/magisk`
 - Runtime payload after boot bootstrap: `/data/adb/magisk`
 
@@ -162,7 +162,7 @@ The workflow runs on every push to main and can be triggered manually.
 
 - **Version**: Latest stable release (automatically downloaded during build)
 - **APK mirror**: `/tmp/magisk.apk`
-- **CLI entrypoint on shell PATH**: `/system/bin/magisk`
+- **CLI entrypoints on shell PATH**: `/system/bin/magisk`, `/system/bin/su`, `/system/xbin/su`
 - **Image-staged runtime payload**: `/system/etc/redroid/magisk`
 - **Bootstrapped runtime path**: `/data/adb/magisk`
 - **Module CLI**: `/data/adb/magisk/magisk --install-module <zip>`
