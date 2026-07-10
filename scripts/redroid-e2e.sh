@@ -170,12 +170,14 @@ adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
 magisk_activity=$(adb -s "$adb_serial" shell cmd package resolve-activity --brief "$magisk_pkg" \
   | tr -d '\r' | tail -n 1)
 [[ $magisk_activity == */* ]]
+app_uid_root=$(adb -s "$adb_serial" shell "su $magisk_uid -c 'su -c id'" | tr -d '\r')
+grep -q 'uid=0(root)' <<<"$app_uid_root"
 magisk_version=$(adb -s "$adb_serial" shell /data/adb/magisk/magisk -v | tr -d '\r' | cut -d: -f1)
 magisk_ver_code=$(adb -s "$adb_serial" shell /data/adb/magisk/magisk -V | tr -d '\r' | head -n 1)
 magisk_version_regex=$(printf '%s' "$magisk_version" | sed 's/[][(){}.^$*+?|\\-]/\\&/g')
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
-wait_for_ui_match 30 "text=\"${magisk_version_regex} \\(${magisk_ver_code}\\)\"" 'active Magisk home card'
+wait_for_ui_match 30 "resource-id=\"com.topjohnwu.magisk:id/home_magisk_installed_version\".*text=\"${magisk_version_regex} \\(${magisk_ver_code}\\)\"" 'active Magisk home card'
 
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity" --es "$magisk_section_key" superuser
 wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/superuserFragment"[^>]*selected="true"' 'Magisk Superuser section'

@@ -36,6 +36,12 @@ RUN mkdir -p runtime && \
     unzip -p magisk.apk lib/arm64-v8a/libmagiskpolicy.so > runtime/magiskpolicy && \
     chmod 755 runtime/busybox runtime/magisk runtime/magiskboot runtime/magiskinit runtime/magiskpolicy runtime/module_installer.sh
 
+RUN mkdir -p /debug_ramdisk entrypoints/system/bin entrypoints/system/xbin && \
+    cp runtime/magisk /debug_ramdisk/magisk && \
+    ln -sf /debug_ramdisk/magisk entrypoints/system/bin/magisk && \
+    ln -sf /debug_ramdisk/magisk entrypoints/system/bin/su && \
+    ln -sf /debug_ramdisk/magisk entrypoints/system/xbin/su
+
 COPY scripts/repack-magisk-manager.sh /magisk/repack-magisk-manager.sh
 RUN chmod 755 /magisk/repack-magisk-manager.sh && \
     /magisk/repack-magisk-manager.sh /magisk/magisk.apk /magisk/magisk-manager.apk
@@ -76,9 +82,9 @@ FROM redroid/redroid:13.0.0_64only-latest
 COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
 COPY --from=builder /magisk/magisk-manager.apk /tmp/magisk-manager.apk
 COPY --from=builder /magisk/runtime/ /system/etc/redroid/magisk/
-COPY --from=builder /magisk/runtime/magisk /system/bin/magisk
-COPY --from=builder /magisk/runtime/magisk /system/bin/su
-COPY --from=builder /magisk/runtime/magisk /system/xbin/su
+COPY --from=builder /magisk/entrypoints/system/bin/magisk /system/bin/magisk
+COPY --from=builder /magisk/entrypoints/system/bin/su /system/bin/su
+COPY --from=builder /magisk/entrypoints/system/xbin/su /system/xbin/su
 COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
 COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
 COPY --from=tools /tools/android/arm64/ /data/local/tmp/tools/arm64/
