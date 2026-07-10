@@ -219,6 +219,7 @@ adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramd
 
 adb -s "$adb_serial" shell am start -W \
   -a "$magisk_flash_action" \
+  -f 0x14000000 \
   --es flash_action flash \
   --es flash_uri file:///data/local/tmp/vector-module.zip \
   "$magisk_activity"
