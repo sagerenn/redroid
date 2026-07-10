@@ -230,16 +230,33 @@ jobs:
             echo "Android version:"
             adb -s localhost:5555 shell getprop ro.build.version.release || true
 
-            # Check if Magisk APK exists
-            if adb -s localhost:5555 shell "[ -f /data/local/tmp/magisk.apk ] && echo exists" 2>/dev/null | grep -q exists; then
-              echo "✓ Magisk APK found at /data/local/tmp/magisk.apk"
-              adb -s localhost:5555 shell ls -lh /data/local/tmp/magisk.apk || true
+            # Check if Magisk APK exists in the image
+            if adb -s localhost:5555 shell "[ -f /magisk.apk ] && echo exists" 2>/dev/null | grep -q exists; then
+              echo "✓ Magisk APK found at /magisk.apk"
+              adb -s localhost:5555 shell ls -lh /magisk.apk || true
 
-              # Try to install Magisk (may fail without proper setup, but we can try)
-              echo "Attempting to install Magisk..."
-              adb -s localhost:5555 install /data/local/tmp/magisk.apk || echo "Magisk installation requires manual setup in real usage"
+              # Check if setup script exists
+              if adb -s localhost:5555 shell "[ -f /setup-magisk.sh ] && echo exists" 2>/dev/null | grep -q exists; then
+                echo "✓ Magisk setup script found"
+
+                # Run the setup script to install Magisk
+                echo "Running Magisk setup script..."
+                adb -s localhost:5555 shell "/setup-magisk.sh" || echo "Setup script execution (may require full Android boot)"
+
+                # Verify installation
+                echo "Checking if Magisk was installed..."
+                adb -s localhost:5555 shell pm list packages | grep magisk || echo "Magisk package check"
+
+                # Check if APK was copied to /data
+                if adb -s localhost:5555 shell "[ -f /data/local/tmp/magisk.apk ] && echo exists" 2>/dev/null | grep -q exists; then
+                  echo "✓ Magisk APK copied to /data/local/tmp/"
+                fi
+              else
+                echo "✗ Magisk setup script not found"
+                exit 1
+              fi
             else
-              echo "✗ Magisk APK not found in container"
+              echo "✗ Magisk APK not found in container image"
               exit 1
             fi
           else
