@@ -219,16 +219,24 @@ adb -s "$adb_serial" push /tmp/vector-module.zip /sdcard/Download/vector-module.
 
 adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramdisk
 
-tap_ui_node 'text="Install from storage"|content-desc="Install from storage"' 'Magisk install-from-storage button'
-if ! wait_for_ui_match 5 'text="vector-module.zip"|package="com.android.documentsui"|package="com.google.android.documentsui"' 'Android file picker'; then
-  tap_ui_node 'text="Install from storage"|content-desc="Install from storage"' 'Magisk install-from-storage button retry'
-  wait_for_ui_match 20 'text="vector-module.zip"|package="com.android.documentsui"|package="com.google.android.documentsui"' 'Android file picker'
-fi
-tap_ui_node 'text="vector-module.zip"' 'Vector module file picker item'
-wait_for_ui_match 20 'Confirm|vector-module.zip|OK' 'Magisk module install confirmation'
-tap_ui_node 'text="OK"|text="Install"|text="INSTALL"' 'Magisk module install confirmation button'
+adb -s "$adb_serial" shell am start -W \
+  -a "$magisk_flash_action" \
+  -f 0x34000000 \
+  --es flash_action flash \
+  --es flash_uri file:///data/local/tmp/vector-module.zip \
+  "$magisk_activity"
 
-wait_for_ui_match 20 'Flashing|Done|Failed|Installation|Installing' 'Magisk flash screen'
+if ! wait_for_ui_match 5 'Flashing|Done|Failed|Installation|Installing' 'Magisk flash screen'; then
+  tap_ui_node 'text="Install from storage"|content-desc="Install from storage"' 'Magisk install-from-storage button'
+  if ! wait_for_ui_match 5 'text="vector-module.zip"|package="com.android.documentsui"|package="com.google.android.documentsui"' 'Android file picker'; then
+    tap_ui_node 'text="Install from storage"|content-desc="Install from storage"' 'Magisk install-from-storage button retry'
+    wait_for_ui_match 20 'text="vector-module.zip"|package="com.android.documentsui"|package="com.google.android.documentsui"' 'Android file picker'
+  fi
+  tap_ui_node 'text="vector-module.zip"' 'Vector module file picker item'
+  wait_for_ui_match 20 'Confirm|vector-module.zip|OK' 'Magisk module install confirmation'
+  tap_ui_node 'text="OK"|text="Install"|text="INSTALL"' 'Magisk module install confirmation button'
+  wait_for_ui_match 20 'Flashing|Done|Failed|Installation|Installing' 'Magisk flash screen'
+fi
 
 wait_for_device_test 60 'Vector module staging' "test -d /data/adb/modules_update/$vector_module_id"
 wait_for_device_test 60 'Vector module manifest' "test -f /data/adb/modules_update/$vector_module_id/module.prop"
