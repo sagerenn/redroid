@@ -8,6 +8,7 @@ RUN apt-get update && \
     curl \
     default-jdk-headless \
     apktool \
+    apksigner \
     python3 \
     unzip \
     zip \
