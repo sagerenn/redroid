@@ -11,6 +11,7 @@ image_ref=$1
 container_name=${2:-redroid-e2e}
 adb_serial=${ADB_SERIAL:-localhost:5555}
 boot_timeout_seconds=${BOOT_TIMEOUT_SECONDS:-240}
+vector_release_url=${VECTOR_RELEASE_URL:-https://github.com/JingMatrix/Vector/releases/download/v2.0/Vector-v2.0-3021-Release.zip}
 
 dump_diagnostics() {
   echo "container status:" >&2
@@ -35,7 +36,8 @@ docker run -d \
   -p 5555:5555 \
   "$image_ref" \
   androidboot.redroid_gpu_mode=guest \
-  androidboot.use_memfd=1
+  androidboot.use_memfd=1 \
+  ro.secure=0
 
 deadline=$((SECONDS + boot_timeout_seconds))
 adb start-server >/dev/null
@@ -63,16 +65,40 @@ until [[ $(adb -s "$adb_serial" shell getprop sys.boot_completed 2>/dev/null | t
   sleep 5
 done
 
+adb -s "$adb_serial" root >/dev/null 2>&1 || true
+sleep 2
+adb -s "$adb_serial" wait-for-device
+
 adb -s "$adb_serial" shell getprop ro.build.version.release
+adb -s "$adb_serial" shell id | grep -q 'uid=0'
 
 magisk_pkg='com.topjohnwu.magisk'
 magisk_activity='com.topjohnwu.magisk.ui.MainActivity'
 yuntai_pkg='com.ctyun.oa'
 yuntai_activity='com.ctg.itrdc.mf.yimu.modules.splash.ui.YunTaiSplashActivity'
+vector_module_id='zygisk_vector'
 
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
+
+curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
+adb -s "$adb_serial" push /tmp/vector-module.zip /data/local/tmp/vector-module.zip >/dev/null
+
+adb -s "$adb_serial" shell <<'EOF'
+set -e
+magisk_tmp=/debug_ramdisk
+mkdir -p "$magisk_tmp/.magisk/busybox" "$magisk_tmp/.magisk/worker" "$magisk_tmp/.magisk/preinit"
+touch "$magisk_tmp/.magisk/config"
+cp -af /data/adb/magisk/busybox "$magisk_tmp/.magisk/busybox/busybox"
+chmod 755 "$magisk_tmp/.magisk/busybox/busybox"
+EOF
+
+adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramdisk
+adb -s "$adb_serial" shell /data/adb/magisk/magisk --install-module /data/local/tmp/vector-module.zip
+adb -s "$adb_serial" shell test -d "/data/adb/modules_update/$vector_module_id"
+adb -s "$adb_serial" shell test -f "/data/adb/modules_update/$vector_module_id/module.prop"
+adb -s "$adb_serial" shell grep -q '^id=zygisk_vector$' "/data/adb/modules_update/$vector_module_id/module.prop"
 
 adb -s "$adb_serial" install -r yuntai.apk
 adb -s "$adb_serial" shell pm path "$yuntai_pkg" | grep -q '^package:'
