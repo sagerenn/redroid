@@ -1,4 +1,5 @@
-FROM ubuntu:22.04 AS builder
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
 # Install build dependencies
 RUN apt-get update && \
@@ -20,7 +21,8 @@ RUN curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest > rele
 # Main image - redroid base for Android 13
 FROM redroid/redroid:13.0.0-latest
 
-# Copy Magisk APK to /tmp (which should be writable)
+# Preinstall Magisk as a system app and keep a copy in /tmp for adb-based checks.
+COPY --from=builder /magisk/magisk.apk /system/app/Magisk/Magisk.apk
 COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
 
 # Set environment variables
@@ -31,7 +33,7 @@ EXPOSE 5555
 
 # Labels
 LABEL org.opencontainers.image.title="Redroid 13 with Magisk (ARM64)"
-LABEL org.opencontainers.image.description="Android 13 with Magisk APK included at /tmp/magisk.apk"
+LABEL org.opencontainers.image.description="Android 13 with Magisk preinstalled and APK included at /tmp/magisk.apk"
 LABEL org.opencontainers.image.version="13.0.0"
 LABEL org.opencontainers.image.architecture="arm64"
 LABEL magisk.included="true"

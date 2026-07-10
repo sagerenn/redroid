@@ -14,8 +14,77 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  verify-image:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            platform: linux/arm64
+            dockerfile: Dockerfile.arm64
+          - arch: amd64
+            platform: linux/amd64
+            dockerfile: Dockerfile.amd64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,amd64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for layout verification
+        run: |
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --load \
+            -f ${{ matrix.dockerfile }} \
+            -t redroid-verify:${{ matrix.arch }} \
+            .
+
+      - name: Verify image layout
+        run: ./scripts/verify-image-layout.sh redroid-verify:${{ matrix.arch }} ${{ matrix.arch }}
+
+  runtime-test:
+    runs-on: ubuntu-24.04
+    needs: verify-image
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare host for redroid
+        run: ./scripts/prepare-redroid-host.sh
+
+      - name: Build amd64 runtime image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            -f Dockerfile.amd64 \
+            -t redroid-runtime:amd64 \
+            .
+
+      - name: Run real e2e test
+        env:
+          BOOT_TIMEOUT_SECONDS: 300
+        run: ./scripts/redroid-e2e.sh redroid-runtime:amd64 redroid-runtime-amd64
+
+  publish:
+    runs-on: ubuntu-24.04
+    needs: [verify-image, runtime-test]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -43,7 +112,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -57,7 +125,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=13-magisk-${{ matrix.arch }}
-            type=raw,value=latest-${{ matrix.arch }},enable={{is_default_branch}}
+            type=raw,value=latest-${{ matrix.arch }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -65,221 +133,16 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  test:
-    needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64, amd64]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64,amd64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull Docker image
-        run: |
-          # Wait a bit for image to be fully available after push
-          sleep 5
-          # Pull with explicit platform to support cross-architecture testing
-          docker pull --platform linux/${{ matrix.arch }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }}
-
-      - name: Test Docker image
-        run: |
-          echo "Testing redroid 13 with Magisk - ${{ matrix.arch }} architecture"
-
-          # Verify image can be inspected
-          docker inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }}
-
-          # Extract image and check for Magisk APK
-          CONTAINER_ID=$(docker create --platform linux/${{ matrix.arch }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }})
-          echo "Created container: $CONTAINER_ID"
-
-          # Try to copy Magisk APK from /tmp to verify it exists
-          if docker cp $CONTAINER_ID:/tmp/magisk.apk ./magisk-${{ matrix.arch }}.apk 2>/dev/null; then
-            echo "✓ Magisk APK found in image at /tmp/magisk.apk"
-            ls -lh ./magisk-${{ matrix.arch }}.apk
-          else
-            echo "✗ Magisk APK not found at /tmp/magisk.apk"
-            exit 1
-          fi
-
-          docker rm $CONTAINER_ID
-          echo "✓ Test completed successfully for ${{ matrix.arch }}"
-
-      - name: Verify Magisk presence
-        run: |
-          if [ -f ./magisk-${{ matrix.arch }}.apk ]; then
-            echo "✓ Magisk APK verified ($(du -h ./magisk-${{ matrix.arch }}.apk | cut -f1))"
-          else
-            echo "✗ Magisk APK verification failed"
-            exit 1
-          fi
-
-  runtime-test:
-    needs: [build, test]
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64]  # Only test AMD64 for now since GitHub runners are AMD64
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64,amd64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install ADB
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y android-tools-adb
-          adb version
-
-      - name: Pull Docker image
-        run: |
-          sleep 5
-          docker pull --platform linux/${{ matrix.arch }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }}
-
-      - name: Start Redroid container
-        run: |
-          echo "Starting redroid container..."
-          docker run -d \
-            --privileged \
-            --name redroid-test-${{ matrix.arch }} \
-            -p 5555:5555 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }} \
-            androidboot.redroid_gpu_mode=guest || true
-
-          echo "Waiting for container to initialize (30 seconds)..."
-          sleep 30
-
-          if docker ps | grep -q redroid-test-${{ matrix.arch }}; then
-            echo "✓ Container is running"
-          else
-            echo "Container status:"
-            docker ps -a | grep redroid-test-${{ matrix.arch }} || echo "Container not found"
-            echo "Container logs:"
-            docker logs redroid-test-${{ matrix.arch }} || true
-          fi
-
-      - name: Test ADB connection
-        run: |
-          echo "Testing ADB connection to localhost:5555..."
-
-          # Try to connect with ADB
-          adb connect localhost:5555 || echo "Initial connection attempt (container may still be booting)"
-
-          # Wait for Android to boot
-          echo "Waiting for Android to boot (60 seconds)..."
-          sleep 60
-
-          # Try again
-          adb connect localhost:5555 || echo "Second connection attempt"
-          sleep 10
-
-          # Check ADB devices
-          adb devices -l
-
-          # Try to wait for device (with timeout)
-          timeout 30 adb -s localhost:5555 wait-for-device || echo "Device wait timed out - container may need more time"
-
-      - name: Verify Magisk and test installation
-        run: |
-          echo "Checking for Magisk APK in container..."
-
-          # Check if we can execute shell commands
-          if adb -s localhost:5555 shell "echo 'ADB shell working'" 2>/dev/null | grep -q "working"; then
-            echo "✓ ADB shell is working"
-
-            # Get Android version
-            echo "Android version:"
-            adb -s localhost:5555 shell getprop ro.build.version.release || true
-
-            # Check if Magisk APK exists in the image
-            if adb -s localhost:5555 shell "[ -f /tmp/magisk.apk ] && echo exists" 2>/dev/null | grep -q exists; then
-              echo "✓ Magisk APK found at /tmp/magisk.apk"
-              adb -s localhost:5555 shell ls -lh /tmp/magisk.apk || true
-
-              # Copy to /data and install
-              echo "Setting up Magisk..."
-              adb -s localhost:5555 shell "mkdir -p /data/local/tmp && cp /tmp/magisk.apk /data/local/tmp/" || true
-
-              # Try to install via adb
-              echo "Installing Magisk via adb..."
-              adb -s localhost:5555 install /tmp/magisk.apk || echo "Magisk installation (may require full Android boot)"
-
-              # Verify installation
-              echo "Checking if Magisk was installed..."
-              adb -s localhost:5555 shell pm list packages | grep magisk || echo "Magisk package check"
-            else
-              echo "✗ Magisk APK not found in container image"
-              exit 1
-            fi
-          else
-            echo "! ADB connection not fully working - container may need kernel modules"
-            echo "This is expected in GitHub Actions without Android kernel support"
-          fi
-
-      - name: Test yuntai.apk installation
-        if: hashFiles('yuntai.apk') != ''
-        run: |
-          echo "Testing yuntai.apk installation..."
-          if [ -f yuntai.apk ]; then
-            adb -s localhost:5555 install yuntai.apk || echo "yuntai.apk installation test (may require running Android)"
-
-            # Try to start the app
-            adb -s localhost:5555 shell pm list packages | grep yuntai || echo "App package check"
-          else
-            echo "yuntai.apk not found in repository, skipping"
-          fi
-
-      - name: Cleanup
-        if: always()
-        run: |
-          echo "Stopping and removing test container..."
-          docker stop redroid-test-${{ matrix.arch }} || true
-          docker rm redroid-test-${{ matrix.arch }} || true
-          adb disconnect localhost:5555 || true
-
   manifest:
-    needs: [build, test, runtime-test]
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    needs: publish
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -294,6 +157,10 @@ jobs:
 
       - name: Create and push multi-arch manifest
         run: |
+          docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-arm64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-amd64
+
           docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-latest \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-arm64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-amd64
@@ -302,4 +169,4 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-arm64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-amd64
 
-          echo "✓ Multi-architecture manifest created"
+          echo "Multi-architecture manifest created"
