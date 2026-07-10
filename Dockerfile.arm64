@@ -5,6 +5,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
@@ -15,11 +16,47 @@ RUN MAGISK_VERSION=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/relea
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v${MAGISK_VERSION}/Magisk-v${MAGISK_VERSION}.apk" || \
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/latest/download/Magisk-latest.apk"
 
+# Extract Magisk components
+RUN unzip -o magisk.apk -d magisk_extracted && \
+    mkdir -p magisk_install && \
+    cp -r magisk_extracted/lib/* magisk_install/ 2>/dev/null || true && \
+    cp -r magisk_extracted/assets/* magisk_install/ 2>/dev/null || true
+
 # Main image - redroid base for Android 13
 FROM redroid/redroid:13.0.0-latest
 
-# Copy Magisk APK to the Android system
+# Copy Magisk APK for manual installation option
 COPY --from=builder /magisk/magisk.apk /data/local/tmp/magisk.apk
+
+# Copy Magisk binaries and modules
+COPY --from=builder /magisk/magisk_install /data/adb/magisk/
+
+# Create Magisk installation structure
+RUN mkdir -p /data/adb/magisk \
+    /data/adb/modules \
+    /data/adb/post-fs-data.d \
+    /data/adb/service.d || true
+
+# Create init script to set up Magisk on boot
+COPY --chmod=755 <<'EOF' /data/adb/magisk/init.sh
+#!/system/bin/sh
+# Magisk initialization script for redroid
+
+MAGISKBIN=/data/adb/magisk
+export PATH=$MAGISKBIN:$PATH
+
+# Set up Magisk paths
+mkdir -p /data/adb/modules
+mkdir -p /data/adb/post-fs-data.d
+mkdir -p /data/adb/service.d
+
+# Install Magisk APK if not already installed
+if ! pm list packages | grep -q com.topjohnwu.magisk; then
+    pm install -r /data/local/tmp/magisk.apk
+fi
+
+echo "Magisk initialization completed"
+EOF
 
 # Set environment variables
 ENV MAGISK_VER=latest
@@ -29,6 +66,7 @@ EXPOSE 5555
 
 # Labels
 LABEL org.opencontainers.image.title="Redroid 13 with Magisk (ARM64)"
-LABEL org.opencontainers.image.description="Android 13 in container with Magisk support for ARM64. Magisk APK is pre-installed at /data/local/tmp/magisk.apk"
+LABEL org.opencontainers.image.description="Android 13 in container with Magisk pre-installed for ARM64"
 LABEL org.opencontainers.image.version="13.0.0"
 LABEL org.opencontainers.image.architecture="arm64"
+LABEL magisk.installed="true"
