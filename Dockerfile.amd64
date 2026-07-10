@@ -113,9 +113,8 @@ COPY --from=nativebridge /native-bridge/system/lib64/libnb.so /system/lib64/libn
 COPY --from=magisk /magisk/magisk.apk /tmp/magisk.apk
 COPY --from=magisk /magisk/magisk-manager.apk /tmp/magisk-manager.apk
 COPY --from=magisk /magisk/runtime/ /system/etc/redroid/magisk/
-COPY --from=magisk /magisk/entrypoints/system/bin/magisk /system/bin/magisk
-COPY --from=magisk /magisk/entrypoints/system/bin/su /system/bin/su
-COPY --from=magisk /magisk/entrypoints/system/xbin/su /system/xbin/su
+COPY --from=magisk /magisk/entrypoints/system/bin/ /system/bin/
+COPY --from=magisk /magisk/entrypoints/system/xbin/ /system/xbin/
 COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
 COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
 COPY --from=tools /tools/android/x86_64/ /data/local/tmp/tools/x86_64/
