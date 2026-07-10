@@ -7,6 +7,7 @@ Docker images for Android 13 (redroid) with the Magisk APK staged for user-space
 - **Android 13** running in Docker containers
 - **Magisk** APK staged for user-app installation
 - **Magisk runtime payload** staged at `/data/adb/magisk`
+- **Pre-staged debugging tools** under `/data/local/tmp/tools`
 - **Multi-architecture**: ARM64 64-bit-only and AMD64 with ARM64 translation
 - **Real runtime smoke test** in GitHub Actions
 - **Pre-built images** available on GitHub Container Registry
@@ -166,6 +167,31 @@ The workflow runs on every push to main and can be triggered manually.
 - **Runtime payload**: `/data/adb/magisk`
 - **Module CLI**: `/data/adb/magisk/magisk --install-module <zip>`
 - **Source**: Official Magisk releases from [topjohnwu/Magisk](https://github.com/topjohnwu/Magisk)
+
+## Bundled Tools
+
+The image now stages architecture-specific debugging binaries under `/data/local/tmp/tools`.
+
+Available now:
+
+- `frida-server`
+- `ecapture`
+- `lldb-server`
+- `eBPFDexDumper` (`arm64` only)
+- `stackplz` (`arm64` only)
+
+Layout examples:
+
+```bash
+adb shell ls /data/local/tmp/tools/arm64
+adb shell ls /data/local/tmp/tools/x86_64
+```
+
+Notes:
+
+- `eBPFDexDumper` is only published upstream for `arm64`, so it is not staged into the `amd64` image.
+- `stackplz` is only published upstream as an `arm64` Android binary, so it is not staged into the `amd64` image.
+- `eDBG` is not bundled yet because the latest upstream release exposes host/Linux binaries instead of Android-targeted binaries.
 
 ## Advanced Usage
 

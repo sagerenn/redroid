@@ -31,6 +31,33 @@ RUN mkdir -p runtime && \
     unzip -p magisk.apk lib/arm64-v8a/libmagiskpolicy.so > runtime/magiskpolicy && \
     chmod 755 runtime/busybox runtime/magisk runtime/magiskboot runtime/magiskinit runtime/magiskpolicy runtime/module_installer.sh
 
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS tools
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    xz-utils \
+    tar \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tools
+
+RUN mkdir -p android/arm64 && \
+    curl -fsSL https://github.com/frida/frida/releases/download/17.15.4/frida-server-17.15.4-android-arm64.xz \
+    | xz -d > android/arm64/frida-server && \
+    curl -fsSL https://github.com/gojue/ecapture/releases/download/v2.5.1/ecapture-v2.5.1-android-arm64.tar.gz \
+    | tar -xz -C android/arm64 --strip-components=1 && \
+    curl -fsSL https://github.com/LLeavesG/eBPFDexDumper/releases/download/v1.1.1/eBPFDexDumper-arm64 \
+    -o android/arm64/eBPFDexDumper && \
+    curl -fsSL https://github.com/SeeFlowerX/stackplz/releases/download/v3.0.3/stackplz \
+    -o android/arm64/stackplz && \
+    curl -fsSL https://github.com/phudev95/magisk-a64dbg/archive/refs/heads/master.tar.gz \
+    | tar -xz -C /tmp && \
+    cp /tmp/magisk-a64dbg-master/files/a64dbg-server-arm64/lldb-server android/arm64/lldb-server && \
+    chmod 755 android/arm64/* && \
+    rm -rf /tmp/magisk-a64dbg-master
+
 # Main image - redroid base for Android 13 (64-bit only)
 FROM redroid/redroid:13.0.0_64only-latest
 
@@ -39,6 +66,7 @@ COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
 COPY --from=builder /magisk/runtime/ /system/etc/redroid/magisk/
 COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
 COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
+COPY --from=tools /tools/android/arm64/ /data/local/tmp/tools/arm64/
 
 # Set environment variables
 ENV MAGISK_VER=latest
