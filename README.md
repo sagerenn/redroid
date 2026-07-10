@@ -7,7 +7,7 @@ Docker images for Android 13 (redroid) with the Magisk app preinstalled, a stage
 - **Android 13** running in Docker containers
 - **Magisk** app preinstalled as a system app
 - **Magisk runtime payload** staged at `/data/adb/magisk`
-- **Multi-architecture**: ARM64 native and AMD64 with ARM64 translation
+- **Multi-architecture**: ARM64 64-bit-only and AMD64 with ARM64 translation
 - **Real runtime smoke test** in GitHub Actions
 - **Pre-built images** available on GitHub Container Registry
 
@@ -106,7 +106,8 @@ adb shell am start -W -n org.lsposed.manager/org.lsposed.manager.ui.activity.Mai
 ## Architecture Support
 
 ### ARM64
-- Native ARM64 support
+- Built from `redroid/redroid:13.0.0_64only-latest`
+- Avoids 32-bit userspace requirements on ARM64 cloud hosts
 - Best performance on ARM64 hosts (e.g., Apple Silicon, ARM servers)
 - Image: `ghcr.io/sagerenn/redroid:13-magisk-arm64`
 
