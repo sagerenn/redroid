@@ -160,6 +160,9 @@ cp "$source_apk" "$hidden_data_dir/dyn/current.apk"
 chown -R "$hidden_uid:$hidden_uid" "$hidden_data_dir/dyn"
 chmod 600 "$hidden_data_dir/dyn/current.apk"
 restorecon -R "$hidden_data_dir" >/dev/null 2>&1 || true
+
+policy_sql="INSERT OR REPLACE INTO policies (uid,policy,until,logging,notification) VALUES(${hidden_uid},2,0,0,0)"
+"$magisk_bin" --sqlite "$policy_sql" >/dev/null
 EOF
 
 for perm in \
