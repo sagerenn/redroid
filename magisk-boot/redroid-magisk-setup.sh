@@ -2,6 +2,12 @@
 
 set -eu
 
+if [ -z "${REDROID_MAGISK_BUSYBOX:-}" ]; then
+  export REDROID_MAGISK_BUSYBOX=1
+  export ASH_STANDALONE=1
+  exec /system/etc/redroid/magisk/busybox sh "$0" "$@"
+fi
+
 LOG_FILE=/cache/redroid-magisk-setup.log
 mkdir -p /cache 2>/dev/null || true
 exec >>"$LOG_FILE" 2>&1
