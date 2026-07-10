@@ -21,11 +21,46 @@ dump_diagnostics() {
   adb -s "$adb_serial" shell ls -ld /data/adb /data/adb/magisk /data/adb/modules /debug_ramdisk /debug_ramdisk/.magisk 2>&1 >&2 || true
   adb -s "$adb_serial" shell cat /cache/redroid-magisk-setup.log 2>&1 >&2 || true
   adb -s "$adb_serial" shell /data/adb/magisk/magisk -v 2>&1 >&2 || true
+  adb -s "$adb_serial" shell dumpsys window windows 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' >&2 || true
+  echo "ui dump:" >&2
+  dump_ui >&2 || true
 }
 
 dump_ui() {
   adb -s "$adb_serial" shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1 || true
   adb -s "$adb_serial" shell cat /data/local/tmp/ui.xml 2>/dev/null || true
+}
+
+wait_for_device_test() {
+  local timeout_seconds=$1
+  local description=$2
+  local shell_test=$3
+  local local_deadline=$((SECONDS + timeout_seconds))
+
+  until adb -s "$adb_serial" shell "$shell_test" >/dev/null 2>&1; do
+    if (( SECONDS >= local_deadline )); then
+      echo "timed out waiting for ${description}" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+wait_for_ui_match() {
+  local timeout_seconds=$1
+  local regex=$2
+  local description=$3
+  local local_deadline=$((SECONDS + timeout_seconds))
+  local ui_dump=''
+
+  until ui_dump=$(dump_ui) && grep -Eq "$regex" <<<"$ui_dump"; do
+    if (( SECONDS >= local_deadline )); then
+      echo "timed out waiting for ${description}" >&2
+      printf '%s\n' "$ui_dump" >&2
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 cleanup() {
@@ -112,12 +147,10 @@ adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
 
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" superuser
-sleep 2
-dump_ui | grep -q 'Superuser'
+wait_for_ui_match 20 'Superuser' 'Magisk Superuser section'
 
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" modules
-sleep 2
-dump_ui | grep -q 'Install from storage'
+wait_for_ui_match 20 'Install from storage|No module installed' 'Magisk Modules section'
 
 curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
 unzip -p /tmp/vector-module.zip manager.apk > /tmp/vector-manager.apk
@@ -132,18 +165,17 @@ adb -s "$adb_serial" shell am start -W \
   --es flash_uri file:///data/local/tmp/vector-module.zip \
   "$magisk_pkg/$magisk_activity"
 
-sleep 2
-dump_ui | grep -Eq 'Flashing|Done|Failure'
+wait_for_ui_match 20 'Flashing|Done|Failed' 'Magisk flash screen'
 
-adb -s "$adb_serial" shell test -d "/data/adb/modules_update/$vector_module_id"
-adb -s "$adb_serial" shell test -f "/data/adb/modules_update/$vector_module_id/module.prop"
+wait_for_device_test 60 'Vector module staging' "test -d /data/adb/modules_update/$vector_module_id"
+wait_for_device_test 60 'Vector module manifest' "test -f /data/adb/modules_update/$vector_module_id/module.prop"
 adb -s "$adb_serial" shell grep -q '^id=zygisk_vector$' "/data/adb/modules_update/$vector_module_id/module.prop"
 
 adb -s "$adb_serial" install -r /tmp/vector-manager.apk
 adb -s "$adb_serial" shell pm path "$vector_manager_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell am start -W -n "$vector_manager_pkg/$vector_manager_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$vector_manager_pkg"
-dump_ui | grep -q 'LSPosed'
+wait_for_ui_match 20 'LSPosed' 'Vector manager UI'
 
 adb -s "$adb_serial" install -r yuntai.apk
 adb -s "$adb_serial" shell pm path "$yuntai_pkg" | grep -q '^package:'

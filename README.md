@@ -1,12 +1,12 @@
 # Redroid 13 with Magisk
 
-Docker images for Android 13 (redroid) with the Magisk APK staged for user-space installation, a staged Magisk runtime under `/data/adb/magisk`, and support for both ARM64 and AMD64 hosts.
+Docker images for Android 13 (redroid) with the Magisk APK staged for user-space installation, a boot-time Magisk runtime bootstrap from `/system/etc/redroid/magisk`, and support for both ARM64 and AMD64 hosts.
 
 ## Features
 
 - **Android 13** running in Docker containers
 - **Magisk** APK staged for user-app installation
-- **Magisk runtime payload** staged at `/data/adb/magisk`
+- **Magisk runtime payload** staged at `/system/etc/redroid/magisk` and copied into `/data/adb/magisk` at boot
 - **Pre-staged debugging tools** under `/data/local/tmp/tools`
 - **Multi-architecture**: ARM64 64-bit-only and AMD64 with ARM64 translation
 - **Real runtime smoke test** in GitHub Actions
@@ -62,7 +62,8 @@ adb shell getprop ro.build.version.release
 The image now carries both the APK used for user-space installation and the runtime files used by the module installer:
 
 - APK mirror for manual installs/tests: `/tmp/magisk.apk`
-- Runtime payload: `/data/adb/magisk`
+- Runtime payload in the image: `/system/etc/redroid/magisk`
+- Runtime payload after boot bootstrap: `/data/adb/magisk`
 
 Install and start the Magisk app:
 
@@ -75,25 +76,21 @@ adb shell am start -W -n com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivi
 
 The workflow tests Magisk module installation with the latest Vector release from [JingMatrix/Vector](https://github.com/JingMatrix/Vector). The current Vector manager APK still uses package `org.lsposed.manager` and displays `LSPosed` as the app label.
 
-This is the same basic flow used by CI:
+This is the same Magisk-app-driven flow used by CI:
 
 ```bash
 curl -fsSL -o /tmp/vector-module.zip \
   https://github.com/JingMatrix/Vector/releases/download/v2.0/Vector-v2.0-3021-Release.zip
 
 adb push /tmp/vector-module.zip /data/local/tmp/vector-module.zip
-
-adb shell <<'EOF'
-set -e
-magisk_tmp=/debug_ramdisk
-mkdir -p "$magisk_tmp/.magisk/busybox" "$magisk_tmp/.magisk/worker" "$magisk_tmp/.magisk/preinit"
-touch "$magisk_tmp/.magisk/config"
-cp -af /data/adb/magisk/busybox "$magisk_tmp/.magisk/busybox/busybox"
-chmod 755 "$magisk_tmp/.magisk/busybox/busybox"
-EOF
-
 adb shell /data/adb/magisk/magisk --path
-adb shell /data/adb/magisk/magisk --install-module /data/local/tmp/vector-module.zip
+
+adb shell am start -W \
+  -S \
+  -a com.topjohnwu.magisk.intent.FLASH \
+  --es flash_action flash \
+  --es flash_uri file:///data/local/tmp/vector-module.zip \
+  com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
 
 # The installed module is staged for activation on reboot
 adb shell ls /data/adb/modules_update/zygisk_vector
@@ -153,7 +150,7 @@ This project uses GitHub Actions to automatically:
 - Build Docker images for ARM64 and AMD64
 - Verify image layout, including the staged Magisk runtime
 - Boot redroid on a hosted Ubuntu runner
-- Start Magisk, install the Vector Magisk module, and launch the Vector manager app
+- Start Magisk, open its UI sections, install the Vector Magisk module through the Magisk app flow, and launch the Vector manager app
 - Install and launch `yuntai.apk`
 - Push to GitHub Container Registry
 - Create multi-arch manifests
@@ -164,7 +161,8 @@ The workflow runs on every push to main and can be triggered manually.
 
 - **Version**: Latest stable release (automatically downloaded during build)
 - **APK mirror**: `/tmp/magisk.apk`
-- **Runtime payload**: `/data/adb/magisk`
+- **Image-staged runtime payload**: `/system/etc/redroid/magisk`
+- **Bootstrapped runtime path**: `/data/adb/magisk`
 - **Module CLI**: `/data/adb/magisk/magisk --install-module <zip>`
 - **Source**: Official Magisk releases from [topjohnwu/Magisk](https://github.com/topjohnwu/Magisk)
 
@@ -176,7 +174,7 @@ Available now:
 
 - `frida-server`
 - `ecapture`
-- `eDBG` (`arm64` only)
+- `eDBG`
 - `lldb-server`
 - `eBPFDexDumper` (`arm64` only)
 - `stackplz` (`arm64` only)
@@ -190,9 +188,7 @@ adb shell ls /data/local/tmp/tools/x86_64
 
 Notes:
 
-- `eBPFDexDumper` is only published upstream for `arm64`, so it is not staged into the `amd64` image.
-- `stackplz` is only published upstream as an `arm64` Android binary, so it is not staged into the `amd64` image.
-- `eDBG` is only staged into the `arm64` image because the current upstream release only exposes an Android `arm64` binary.
+- `eDBG`, `eBPFDexDumper`, and `stackplz` are Android `arm64` binaries. They are staged into the `arm64` image directly, and also shipped inside the `amd64` image under `/data/local/tmp/tools/arm64` for translated ARM64 app workflows.
 
 ## Advanced Usage
 
@@ -218,7 +214,7 @@ docker run -d \
   ghcr.io/sagerenn/redroid:13-magisk
 ```
 
-Note: replacing `/data` with a fresh external volume hides the staged `/data/adb/magisk` runtime from the image. The GitHub smoke tests run against the image-provided `/data` layout.
+Note: replacing `/data` with a fresh external volume removes the bootstrapped `/data/adb/magisk` runtime copy. The source payload remains in `/system/etc/redroid/magisk`, and the GitHub smoke tests run against the image-provided `/data` layout.
 
 ### Multiple Instances
 

@@ -51,6 +51,9 @@ if [[ $arch == amd64 ]]; then
   require_path /system/lib64/libnb.so
   require_path /system/bin/arm64/linker64
   require_path /system/etc/binfmt_misc/arm64_exe
+  require_path /data/local/tmp/tools/arm64/eDBG
+  require_path /data/local/tmp/tools/arm64/eBPFDexDumper
+  require_path /data/local/tmp/tools/arm64/stackplz
   require_path /data/local/tmp/tools/x86_64/frida-server
   require_path /data/local/tmp/tools/x86_64/ecapture
   require_path /data/local/tmp/tools/x86_64/lldb-server
