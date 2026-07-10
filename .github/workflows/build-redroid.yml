@@ -15,7 +15,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -75,7 +75,7 @@ jobs:
 
   test:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         arch: [arm64, amd64]
@@ -121,7 +121,7 @@ jobs:
             --privileged \
             --name redroid-test-$1 \
             -v $(pwd):/workspace \
-            ubuntu:24.04 sleep 300)
+            ubuntu:latest sleep 300)
 
           echo "Container started: $CONTAINER_ID"
 
@@ -159,7 +159,7 @@ jobs:
 
   manifest:
     needs: [build, test]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     permissions:
       contents: read
