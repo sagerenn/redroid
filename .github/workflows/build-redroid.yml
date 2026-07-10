@@ -104,49 +104,35 @@ jobs:
 
       - name: Test Docker image
         run: |
-          cat > test-redroid.sh << 'EOF'
-          #!/bin/bash
-          set -e
+          echo "Testing redroid 13 with Magisk - ${{ matrix.arch }} architecture"
 
-          echo "Testing redroid 13 with Magisk - $1 architecture"
+          # Verify image can be inspected
+          docker inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }}
 
-          CONTAINER_ID=$(docker run -d \
-            --privileged \
-            --name redroid-test-$1 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-$1 \
-            || docker run -d \
-            --privileged \
-            --name redroid-test-$1 \
-            -v $(pwd):/workspace \
-            ubuntu:latest sleep 300)
+          # Extract image and check for Magisk APK
+          CONTAINER_ID=$(docker create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-${{ matrix.arch }})
+          echo "Created container: $CONTAINER_ID"
 
-          echo "Container started: $CONTAINER_ID"
-          sleep 10
-
-          if docker ps | grep -q redroid-test-$1; then
-            echo "✓ Container is running"
+          # Try to copy Magisk APK to verify it exists
+          if docker cp $CONTAINER_ID:/data/local/tmp/magisk.apk ./magisk-${{ matrix.arch }}.apk 2>/dev/null; then
+            echo "✓ Magisk APK found in image"
+            ls -lh ./magisk-${{ matrix.arch }}.apk
           else
-            echo "✗ Container failed to start"
-            docker logs redroid-test-$1
+            echo "✗ Magisk APK not found"
             exit 1
           fi
 
-          echo "Container logs:"
-          docker logs redroid-test-$1 || true
-
-          docker stop redroid-test-$1 || true
-          docker rm redroid-test-$1 || true
-
-          echo "✓ Test completed successfully for $1"
-          EOF
-
-          chmod +x test-redroid.sh
-          ./test-redroid.sh ${{ matrix.arch }}
+          docker rm $CONTAINER_ID
+          echo "✓ Test completed successfully for ${{ matrix.arch }}"
 
       - name: Verify Magisk presence
         run: |
-          echo "Verifying Magisk components would be included..."
-          echo "✓ Magisk verification placeholder passed"
+          if [ -f ./magisk-${{ matrix.arch }}.apk ]; then
+            echo "✓ Magisk APK verified ($(du -h ./magisk-${{ matrix.arch }}.apk | cut -f1))"
+          else
+            echo "✗ Magisk APK verification failed"
+            exit 1
+          fi
 
   manifest:
     needs: [build, test]
