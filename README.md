@@ -66,7 +66,7 @@ The image now carries both the APK used for user-space installation and the runt
 Install and start the Magisk app:
 
 ```bash
-adb install -r /tmp/magisk.apk
+adb shell pm install -r /tmp/magisk.apk
 adb shell am start -W -n com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
 ```
 

@@ -80,7 +80,7 @@ yuntai_pkg='com.ctyun.oa'
 yuntai_activity='com.ctg.itrdc.mf.yimu.modules.splash.ui.YunTaiSplashActivity'
 vector_module_id='zygisk_vector'
 
-adb -s "$adb_serial" install -r /tmp/magisk.apk
+adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
