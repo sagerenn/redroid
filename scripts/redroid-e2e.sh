@@ -108,13 +108,15 @@ do
   adb -s "$adb_serial" shell pm grant "$magisk_pkg" "$perm" >/dev/null 2>&1 || true
 done
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
-adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity"
+adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
 
-adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" superuser
+adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" superuser
+sleep 2
 dump_ui | grep -q 'Superuser'
 
-adb -s "$adb_serial" shell am start -W -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" modules
+adb -s "$adb_serial" shell am start -W -S -n "$magisk_pkg/$magisk_activity" --es "$magisk_section_key" modules
+sleep 2
 dump_ui | grep -q 'Install from storage'
 
 curl -fsSL "$vector_release_url" -o /tmp/vector-module.zip
@@ -124,11 +126,13 @@ adb -s "$adb_serial" push /tmp/vector-module.zip /data/local/tmp/vector-module.z
 adb -s "$adb_serial" shell /data/adb/magisk/magisk --path | grep -qx /debug_ramdisk
 
 adb -s "$adb_serial" shell am start -W \
+  -S \
   -a "$magisk_flash_action" \
   --es flash_action flash \
   --es flash_uri file:///data/local/tmp/vector-module.zip \
   "$magisk_pkg/$magisk_activity"
 
+sleep 2
 dump_ui | grep -Eq 'Flashing|Done|Failure'
 
 adb -s "$adb_serial" shell test -d "/data/adb/modules_update/$vector_module_id"
