@@ -24,6 +24,7 @@ fi
 
 mkdir -p /data/adb/magisk /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
 cp -af "$SRC_DIR"/. /data/adb/magisk/
+echo "[redroid-magisk-setup] copied payload"
 
 cd /data/adb/magisk
 
@@ -35,6 +36,7 @@ fi
 if ! grep -q ' /cache ' /proc/mounts; then
   mount -t tmpfs -o mode=0755 tmpfs /cache
 fi
+echo "[redroid-magisk-setup] cache ready"
 
 MAGISKTMP=/debug_ramdisk
 if [ ! -d "$MAGISKTMP/.magisk" ]; then
@@ -42,14 +44,15 @@ if [ ! -d "$MAGISKTMP/.magisk" ]; then
   mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP"
   mv magisk.tmp magisk
 fi
+echo "[redroid-magisk-setup] magisk tmp mounted"
 
 mkdir -p "$MAGISKTMP/.magisk" "$MAGISKTMP/.magisk/device" "$MAGISKTMP/.magisk/worker"
 if [ ! -d "$MAGISKTMP/.magisk/worker/.tmpfs_ready" ]; then
   mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP/.magisk/worker"
   mkdir -p "$MAGISKTMP/.magisk/worker/.tmpfs_ready"
 fi
-mount --make-private "$MAGISKTMP/.magisk/worker"
 touch "$MAGISKTMP/.magisk/config"
+echo "[redroid-magisk-setup] worker ready"
 
 for file in magisk magiskpolicy stub.apk; do
   if [ -f "$file" ]; then
@@ -72,6 +75,7 @@ ln -sf ./magiskpolicy "$MAGISKTMP/supolicy"
 
 export MAGISKTMP
 MAKEDEV=1 "$MAGISKTMP/magisk" --preinit-device >/dev/null 2>&1 || true
+echo "[redroid-magisk-setup] preinit done"
 
 RULESCMD=
 rule="$MAGISKTMP/.magisk/preinit/sepolicy.rule"
@@ -92,6 +96,7 @@ mkdir -p /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
 "$MAGISKTMP/magisk" --post-fs-data >/dev/null 2>&1 || true
 "$MAGISKTMP/magisk" --service >/dev/null 2>&1 || true
 "$MAGISKTMP/magisk" --boot-complete >/dev/null 2>&1 || true
+echo "[redroid-magisk-setup] magisk stages invoked"
 
 touch "$MARKER"
 echo "[redroid-magisk-setup] done"
