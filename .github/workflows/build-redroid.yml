@@ -20,6 +20,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: arm64
@@ -49,17 +50,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha
             type=raw,value=13-magisk-${{ matrix.arch }}
-            type=raw,value=latest-${{ matrix.arch }}
+            type=raw,value=latest-${{ matrix.arch }},enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -77,6 +75,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         arch: [arm64, amd64]
 
@@ -105,14 +104,12 @@ jobs:
 
       - name: Test Docker image
         run: |
-          # Create test script
           cat > test-redroid.sh << 'EOF'
           #!/bin/bash
           set -e
 
           echo "Testing redroid 13 with Magisk - $1 architecture"
 
-          # Start container in detached mode
           CONTAINER_ID=$(docker run -d \
             --privileged \
             --name redroid-test-$1 \
@@ -124,11 +121,8 @@ jobs:
             ubuntu:latest sleep 300)
 
           echo "Container started: $CONTAINER_ID"
-
-          # Wait for container to be ready
           sleep 10
 
-          # Check if container is running
           if docker ps | grep -q redroid-test-$1; then
             echo "✓ Container is running"
           else
@@ -137,11 +131,9 @@ jobs:
             exit 1
           fi
 
-          # Check container logs
           echo "Container logs:"
           docker logs redroid-test-$1 || true
 
-          # Cleanup
           docker stop redroid-test-$1 || true
           docker rm redroid-test-$1 || true
 
@@ -154,7 +146,6 @@ jobs:
       - name: Verify Magisk presence
         run: |
           echo "Verifying Magisk components would be included..."
-          # This is a placeholder - actual verification would inspect the image
           echo "✓ Magisk verification placeholder passed"
 
   manifest:
@@ -175,7 +166,6 @@ jobs:
 
       - name: Create and push multi-arch manifest
         run: |
-          # Create manifest for latest tag
           docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-latest \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-arm64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-amd64
@@ -185,5 +175,3 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:13-magisk-amd64
 
           echo "✓ Multi-architecture manifest created"
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
