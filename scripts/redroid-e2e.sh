@@ -124,6 +124,7 @@ adb -s "$adb_serial" shell getprop ro.build.version.release
 adb -s "$adb_serial" shell id | grep -q 'uid=0'
 adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 
+magisk_source_pkg='com.topjohnwu.magisk'
 magisk_pkg='repackaged.com.topjohnwu.magisk'
 magisk_flash_action='com.topjohnwu.magisk.intent.FLASH'
 magisk_section_key='section'
@@ -133,12 +134,15 @@ yuntai_pkg='com.ctyun.oa'
 yuntai_activity='com.ctg.itrdc.mf.yimu.modules.splash.ui.YunTaiSplashActivity'
 vector_module_id='zygisk_vector'
 
+adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
+adb -s "$adb_serial" shell pm path "$magisk_source_pkg" | grep -q '^package:'
 adb -s "$adb_serial" shell pm install -r /tmp/magisk-manager.apk
 for perm in \
   android.permission.POST_NOTIFICATIONS \
   android.permission.READ_EXTERNAL_STORAGE \
   android.permission.WRITE_EXTERNAL_STORAGE
 do
+  adb -s "$adb_serial" shell pm grant "$magisk_source_pkg" "$perm" >/dev/null 2>&1 || true
   adb -s "$adb_serial" shell pm grant "$magisk_pkg" "$perm" >/dev/null 2>&1 || true
 done
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
