@@ -1,4 +1,5 @@
-FROM ubuntu:22.04 AS builder
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS magisk
 
 # Install build dependencies
 RUN apt-get update && \
@@ -15,13 +16,39 @@ RUN curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest > rele
     echo "Downloading Magisk version: ${MAGISK_VERSION}" && \
     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v${MAGISK_VERSION}/Magisk-v${MAGISK_VERSION}.apk" || \
     (echo "Fallback to direct latest download" && \
-     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk")
+     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk")
+
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS nativebridge
+
+# Android 13 upstream currently links to the 12.0.0 native-bridge tarball.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    tar \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /native-bridge
+RUN curl -fsSL https://raw.githubusercontent.com/zhouziyang/libndk_translation/master/libndk_translation-12.0.0.tar \
+    | tar -xf -
 
 # Main image - redroid base for Android 13
 FROM redroid/redroid:13.0.0-latest
 
-# Copy Magisk APK to /tmp (which should be writable)
-COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
+# Keep the amd64 image explicit about the arm64 translation payload it supports.
+COPY --from=nativebridge /native-bridge/system/bin/arm64/ /system/bin/arm64/
+COPY --from=nativebridge /native-bridge/system/bin/ndk_translation_program_runner_binfmt_misc_arm64 /system/bin/ndk_translation_program_runner_binfmt_misc_arm64
+COPY --from=nativebridge /native-bridge/system/etc/binfmt_misc/ /system/etc/binfmt_misc/
+COPY --from=nativebridge /native-bridge/system/etc/init/ndk_translation.rc /system/etc/init/ndk_translation.rc
+COPY --from=nativebridge /native-bridge/system/etc/ld.config.arm64.txt /system/etc/ld.config.arm64.txt
+COPY --from=nativebridge /native-bridge/system/etc/cpuinfo.arm*.txt /system/etc/
+COPY --from=nativebridge /native-bridge/system/lib64/arm64/ /system/lib64/arm64/
+COPY --from=nativebridge /native-bridge/system/lib64/libndk_translation* /system/lib64/
+COPY --from=nativebridge /native-bridge/system/lib64/libnb.so /system/lib64/libnb.so
+
+# Preinstall Magisk as a system app and keep a copy in /tmp for adb-based checks.
+COPY --from=magisk /magisk/magisk.apk /system/app/Magisk/Magisk.apk
+COPY --from=magisk /magisk/magisk.apk /tmp/magisk.apk
 
 # Set environment variables for ARM translation
 ENV MAGISK_VER=latest
@@ -32,7 +59,8 @@ EXPOSE 5555
 
 # Labels
 LABEL org.opencontainers.image.title="Redroid 13 with Magisk (AMD64 with ARM64 translation)"
-LABEL org.opencontainers.image.description="Android 13 with Magisk APK included at /tmp/magisk.apk"
+LABEL org.opencontainers.image.description="Android 13 with Magisk preinstalled and arm64 translation support included"
 LABEL org.opencontainers.image.version="13.0.0"
 LABEL org.opencontainers.image.architecture="amd64"
 LABEL magisk.included="true"
+LABEL redroid.native_bridge="arm64"
