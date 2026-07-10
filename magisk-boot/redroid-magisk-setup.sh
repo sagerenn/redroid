@@ -31,14 +31,17 @@ if ! grep -q ' /cache ' /proc/mounts; then
 fi
 
 MAGISKTMP=/debug_ramdisk
-if ! mountpoint -q "$MAGISKTMP" 2>/dev/null; then
+if [ ! -d "$MAGISKTMP/.magisk" ]; then
   mv magisk magisk.tmp
   mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP"
   mv magisk.tmp magisk
 fi
 
 mkdir -p "$MAGISKTMP/.magisk" "$MAGISKTMP/.magisk/device" "$MAGISKTMP/.magisk/worker"
-mountpoint -q "$MAGISKTMP/.magisk/worker" || mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP/.magisk/worker"
+if [ ! -d "$MAGISKTMP/.magisk/worker/.tmpfs_ready" ]; then
+  mount -t tmpfs -o mode=0755 magisk "$MAGISKTMP/.magisk/worker"
+  mkdir -p "$MAGISKTMP/.magisk/worker/.tmpfs_ready"
+fi
 mount --make-private "$MAGISKTMP/.magisk/worker"
 touch "$MAGISKTMP/.magisk/config"
 
