@@ -16,15 +16,87 @@ echo "[redroid-magisk-setup] start"
 
 MARKER=/data/adb/magisk/.redroid_bootstrapped
 SRC_DIR=/system/etc/redroid/magisk
+MAGISK_PKG=com.topjohnwu.magisk
+MAGISK_APK=/tmp/magisk.apk
 
-if [ -f "$MARKER" ]; then
-  echo "[redroid-magisk-setup] already bootstrapped"
-  exit 0
-fi
+wait_for_shell_test() {
+  local timeout_seconds=$1
+  shift
+  local deadline=$(( $(date +%s) + timeout_seconds ))
+
+  until "$@" >/dev/null 2>&1; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+prepare_magisk_manager_app() {
+  local ce_dir=/data/user/0/$MAGISK_PKG
+  local de_dir=/data/user_de/0/$MAGISK_PKG
+  local magisk_uid mode
+
+  if [ ! -f "$MAGISK_APK" ]; then
+    echo "[redroid-magisk-setup] missing $MAGISK_APK, skipping manager install"
+    return 0
+  fi
+
+  if ! wait_for_shell_test 90 pm path android; then
+    echo "[redroid-magisk-setup] package manager never became ready"
+    return 0
+  fi
+
+  if ! pm path "$MAGISK_PKG" >/dev/null 2>&1; then
+    if pm install -r "$MAGISK_APK" >/dev/null 2>&1; then
+      echo "[redroid-magisk-setup] installed $MAGISK_PKG as user app"
+    else
+      echo "[redroid-magisk-setup] failed to install $MAGISK_PKG"
+      return 0
+    fi
+  fi
+
+  if ! wait_for_shell_test 60 test -d "$ce_dir"; then
+    echo "[redroid-magisk-setup] $ce_dir was never created"
+    return 0
+  fi
+
+  magisk_uid=$(stat -c '%u' "$ce_dir" 2>/dev/null || true)
+  mode=$(stat -c '%a' "$ce_dir" 2>/dev/null || echo 771)
+  if [ -z "$magisk_uid" ]; then
+    echo "[redroid-magisk-setup] could not resolve manager uid"
+    return 0
+  fi
+
+  mkdir -p /data/user_de/0
+  if [ ! -e "$de_dir" ]; then
+    mkdir -p "$de_dir"
+  fi
+  chown "$magisk_uid:$magisk_uid" "$de_dir" >/dev/null 2>&1 || true
+  chmod "$mode" "$de_dir" >/dev/null 2>&1 || true
+  restorecon "$de_dir" >/dev/null 2>&1 || true
+
+  "$MAGISKTMP/magisk" --sqlite "INSERT OR REPLACE INTO strings (key,value) VALUES('requester','$MAGISK_PKG')" >/dev/null 2>&1 || true
+  "$MAGISKTMP/magisk" --sqlite "INSERT OR REPLACE INTO policies (uid,policy,until,logging,notification) VALUES(${magisk_uid},2,0,0,0)" >/dev/null 2>&1 || true
+
+  for perm in \
+    android.permission.POST_NOTIFICATIONS \
+    android.permission.READ_EXTERNAL_STORAGE \
+    android.permission.WRITE_EXTERNAL_STORAGE
+  do
+    pm grant "$MAGISK_PKG" "$perm" >/dev/null 2>&1 || true
+  done
+
+  echo "[redroid-magisk-setup] prepared manager data dirs for uid=$magisk_uid"
+}
 
 mkdir -p /data/adb/magisk /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
-cp -af "$SRC_DIR"/. /data/adb/magisk/
-echo "[redroid-magisk-setup] copied payload"
+if [ ! -f "$MARKER" ] || [ ! -x /data/adb/magisk/magisk ]; then
+  cp -af "$SRC_DIR"/. /data/adb/magisk/
+  echo "[redroid-magisk-setup] copied payload"
+else
+  echo "[redroid-magisk-setup] payload already present"
+fi
 
 cd /data/adb/magisk
 
@@ -96,6 +168,8 @@ mkdir -p /data/adb/modules /data/adb/post-fs-data.d /data/adb/service.d
 "$MAGISKTMP/magisk" --service >/dev/null 2>&1 || true
 "$MAGISKTMP/magisk" --boot-complete >/dev/null 2>&1 || true
 echo "[redroid-magisk-setup] magisk stages invoked"
+
+prepare_magisk_manager_app
 
 touch "$MARKER"
 echo "[redroid-magisk-setup] done"

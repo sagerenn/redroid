@@ -19,8 +19,11 @@ dump_diagnostics() {
   echo "container logs:" >&2
   docker logs "$container_name" >&2 || true
   adb -s "$adb_serial" shell ls -ld /data/adb /data/adb/magisk /data/adb/modules /debug_ramdisk /debug_ramdisk/.magisk 2>&1 >&2 || true
+  adb -s "$adb_serial" shell ls -ld /data/user/0/com.topjohnwu.magisk /data/user_de/0/com.topjohnwu.magisk 2>&1 >&2 || true
   adb -s "$adb_serial" shell cat /cache/redroid-magisk-setup.log 2>&1 >&2 || true
   adb -s "$adb_serial" shell /data/adb/magisk/magisk -v 2>&1 >&2 || true
+  adb -s "$adb_serial" shell ps -A 2>/dev/null | grep -i magisk >&2 || true
+  adb -s "$adb_serial" shell logcat -d -s Magisk libsu ActivityTaskManager PackageManager 2>&1 >&2 || true
   adb -s "$adb_serial" shell dumpsys window windows 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' >&2 || true
   echo "ui dump:" >&2
   dump_ui >&2 || true
@@ -61,6 +64,24 @@ wait_for_ui_match() {
     fi
     sleep 2
   done
+}
+
+prepare_magisk_user_app() {
+  local app_mode
+
+  wait_for_device_test 60 'Magisk CE app data dir' "test -d /data/user/0/$magisk_pkg"
+  magisk_uid=$(adb -s "$adb_serial" shell stat -c '%u' "/data/user/0/$magisk_pkg" \
+    | tr -d '\r' | head -n 1)
+  [[ $magisk_uid =~ ^[0-9]+$ ]]
+  app_mode=$(adb -s "$adb_serial" shell stat -c '%a' "/data/user/0/$magisk_pkg" \
+    | tr -d '\r' | head -n 1)
+  [[ $app_mode =~ ^[0-9]+$ ]]
+
+  adb -s "$adb_serial" shell "mkdir -p /data/user_de/0/$magisk_pkg && chown $magisk_uid:$magisk_uid /data/user_de/0/$magisk_pkg && chmod $app_mode /data/user_de/0/$magisk_pkg"
+  wait_for_device_test 30 'Magisk DE app data dir' "test -d /data/user_de/0/$magisk_pkg"
+
+  adb -s "$adb_serial" shell "/data/adb/magisk/magisk --sqlite \"INSERT OR REPLACE INTO strings (key,value) VALUES('requester','$magisk_pkg')\""
+  adb -s "$adb_serial" shell "/data/adb/magisk/magisk --sqlite \"INSERT OR REPLACE INTO policies (uid,policy,until,logging,notification) VALUES(${magisk_uid},2,0,0,0)\""
 }
 
 cleanup() {
@@ -135,10 +156,7 @@ vector_module_id='zygisk_vector'
 
 adb -s "$adb_serial" shell pm install -r /tmp/magisk.apk
 adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
-magisk_uid=$(adb -s "$adb_serial" shell dumpsys package "$magisk_pkg" \
-  | tr -d '\r' | sed -n 's/.*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)
-[[ $magisk_uid =~ ^[0-9]+$ ]]
-adb -s "$adb_serial" shell "/data/adb/magisk/magisk --sqlite \"INSERT OR REPLACE INTO policies (uid,policy,until,logging,notification) VALUES(${magisk_uid},2,0,0,0)\""
+prepare_magisk_user_app
 
 for perm in \
   android.permission.POST_NOTIFICATIONS \
@@ -152,8 +170,12 @@ adb -s "$adb_serial" shell pm path "$magisk_pkg" | grep -q '^package:'
 magisk_activity=$(adb -s "$adb_serial" shell cmd package resolve-activity --brief "$magisk_pkg" \
   | tr -d '\r' | tail -n 1)
 [[ $magisk_activity == */* ]]
+magisk_version=$(adb -s "$adb_serial" shell /data/adb/magisk/magisk -v | tr -d '\r' | cut -d: -f1)
+magisk_ver_code=$(adb -s "$adb_serial" shell /data/adb/magisk/magisk -V | tr -d '\r' | head -n 1)
+magisk_version_regex=$(printf '%s' "$magisk_version" | sed 's/[][(){}.^$*+?|\\-]/\\&/g')
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity"
 adb -s "$adb_serial" shell dumpsys activity activities | grep -q "$magisk_pkg"
+wait_for_ui_match 30 "text=\"${magisk_version_regex} \\(${magisk_ver_code}\\)\"" 'active Magisk home card'
 
 adb -s "$adb_serial" shell am start -W -S -n "$magisk_activity" --es "$magisk_section_key" superuser
 wait_for_ui_match 20 'resource-id="com.topjohnwu.magisk:id/superuserFragment"[^>]*selected="true"' 'Magisk Superuser section'
@@ -174,7 +196,7 @@ adb -s "$adb_serial" shell am start -W \
   --es flash_uri file:///data/local/tmp/vector-module.zip \
   "$magisk_activity"
 
-wait_for_ui_match 20 'Flashing|Done|Failed' 'Magisk flash screen'
+wait_for_ui_match 20 'Flashing|Done|Failed|Installation|Installing' 'Magisk flash screen'
 
 wait_for_device_test 60 'Vector module staging' "test -d /data/adb/modules_update/$vector_module_id"
 wait_for_device_test 60 'Vector module manifest' "test -f /data/adb/modules_update/$vector_module_id/module.prop"

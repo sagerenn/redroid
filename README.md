@@ -1,11 +1,11 @@
 # Redroid 13 with Magisk
 
-Docker images for Android 13 (redroid) with the Magisk APK staged for user-space installation, a boot-time Magisk runtime bootstrap from `/system/etc/redroid/magisk`, and support for both ARM64 and AMD64 hosts.
+Docker images for Android 13 (redroid) with a boot-time Magisk runtime bootstrap from `/system/etc/redroid/magisk`, automatic user-app preparation for the Magisk UI, and support for both ARM64 and AMD64 hosts.
 
 ## Features
 
 - **Android 13** running in Docker containers
-- **Magisk** APK staged for user-app installation
+- **Magisk** app auto-prepared as a user app at boot
 - **Magisk runtime payload** staged at `/system/etc/redroid/magisk` and copied into `/data/adb/magisk` at boot
 - **Pre-staged debugging tools** under `/data/local/tmp/tools`
 - **Multi-architecture**: ARM64 64-bit-only and AMD64 with ARM64 translation
@@ -59,19 +59,22 @@ adb shell getprop ro.build.version.release
 
 ### Magisk Layout
 
-The image now carries both the APK used for user-space installation and the runtime files used by the module installer:
+The image carries both the runtime files used by the module installer and the APK artifacts used to prepare the Magisk UI as a real user app:
 
-- APK mirror for manual installs/tests: `/tmp/magisk.apk`
-- Repackaged Magisk manager APK for runtime install/tests: `/tmp/magisk-manager.apk`
+- Primary Magisk app package: `com.topjohnwu.magisk`
+- APK mirror for user-app installs/tests: `/tmp/magisk.apk`
+- Repackaged manager artifact: `/tmp/magisk-manager.apk`
 - Magisk app-visible CLI entrypoints: `/system/bin/magisk`, `/system/bin/su`, `/system/xbin/su`
 - Runtime payload in the image: `/system/etc/redroid/magisk`
 - Runtime payload after boot bootstrap: `/data/adb/magisk`
+- Boot-prepared device-protected app dir: `/data/user_de/0/com.topjohnwu.magisk`
 
-Install and start the repackaged Magisk manager app:
+The boot bootstrap installs the original Magisk app as a user app when needed. Verify it is present and launch it:
 
 ```bash
-adb shell pm install -r /tmp/magisk-manager.apk
-adb shell cmd package resolve-activity --brief repackaged.com.topjohnwu.magisk
+adb shell pm path com.topjohnwu.magisk
+adb shell cmd package resolve-activity --brief com.topjohnwu.magisk
+adb shell am start -W -n com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
 ```
 
 ### Install Vector Module
@@ -162,11 +165,13 @@ The workflow runs on every push to main and can be triggered manually.
 ## Magisk Details
 
 - **Version**: Latest stable release (automatically downloaded during build)
+- **Primary app package**: `com.topjohnwu.magisk`
 - **APK mirror**: `/tmp/magisk.apk`
 - **Runtime manager APK**: `/tmp/magisk-manager.apk`
 - **CLI entrypoints on shell PATH**: `/system/bin/magisk`, `/system/bin/su`, `/system/xbin/su`
 - **Image-staged runtime payload**: `/system/etc/redroid/magisk`
 - **Bootstrapped runtime path**: `/data/adb/magisk`
+- **Boot-prepared device-protected app dir**: `/data/user_de/0/com.topjohnwu.magisk`
 - **Module CLI**: `/data/adb/magisk/magisk --install-module <zip>`
 - **Source**: Official Magisk releases from [topjohnwu/Magisk](https://github.com/topjohnwu/Magisk)
 
