@@ -140,6 +140,13 @@ adb -s "$adb_serial" shell pm install -r /tmp/magisk-manager.apk
 requester_sql="INSERT OR REPLACE INTO strings (key,value) VALUES('requester','${magisk_pkg}')"
 requester_cmd=$(printf '%q' "/data/adb/magisk/magisk --sqlite \"${requester_sql}\"")
 adb -s "$adb_serial" shell "sh -c ${requester_cmd}"
+magisk_hidden_uid=$(adb -s "$adb_serial" shell dumpsys package "$magisk_pkg" \
+  | tr -d '\r' | sed -n 's/.*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)
+[[ $magisk_hidden_uid =~ ^[0-9]+$ ]]
+magisk_hidden_data_dir="/data/user_de/0/${magisk_pkg}"
+adb -s "$adb_serial" shell "mkdir -p ${magisk_hidden_data_dir}/dyn"
+adb -s "$adb_serial" shell "cp /tmp/magisk.apk ${magisk_hidden_data_dir}/dyn/current.apk"
+adb -s "$adb_serial" shell "chown ${magisk_hidden_uid}:${magisk_hidden_uid} ${magisk_hidden_data_dir}/dyn/current.apk"
 for perm in \
   android.permission.POST_NOTIFICATIONS \
   android.permission.READ_EXTERNAL_STORAGE \
