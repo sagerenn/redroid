@@ -162,10 +162,12 @@ keytool -genkeypair \
   >/dev/null 2>&1
 
 cp "$unsigned_apk" "$output_apk"
-jarsigner \
-  -keystore "$keystore" \
-  -storepass "$storepass" \
-  -keypass "$keypass" \
-  "$output_apk" "$alias_name" >/dev/null
+apksigner sign \
+  --ks "$keystore" \
+  --ks-key-alias "$alias_name" \
+  --ks-pass "pass:$storepass" \
+  --key-pass "pass:$keypass" \
+  --out "$output_apk" \
+  "$unsigned_apk" >/dev/null
 
 echo "$output_apk"
