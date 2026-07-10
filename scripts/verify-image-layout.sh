@@ -38,8 +38,13 @@ require_path /system/etc/redroid/magisk/magiskinit
 require_path /system/etc/redroid/magisk/magiskpolicy
 require_path /data/local/tmp/tools/arm64/frida-server
 require_path /data/local/tmp/tools/arm64/ecapture
-require_path /data/local/tmp/tools/arm64/eDBG
 require_path /data/local/tmp/tools/arm64/lldb-server
+
+if [[ $arch == arm64 ]]; then
+  require_path /data/local/tmp/tools/arm64/eDBG
+  require_path /data/local/tmp/tools/arm64/eBPFDexDumper
+  require_path /data/local/tmp/tools/arm64/stackplz
+fi
 
 if [[ $arch == amd64 ]]; then
   require_path /system/lib64/libndk_translation.so
