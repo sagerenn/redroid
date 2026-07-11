@@ -30,14 +30,7 @@ docker pull ghcr.io/sagerenn/redroid:13-magisk
 ### Run the Container
 
 ```bash
-docker run -d \
-  --privileged \
-  --name redroid \
-  -p 5555:5555 \
-  ghcr.io/sagerenn/redroid:13-magisk \
-  androidboot.redroid_gpu_mode=guest \
-  androidboot.use_memfd=1 \
-  ro.secure=0
+docker run -d --privileged --name redroid -p 5555:5555 ghcr.io/sagerenn/redroid:13-magisk
 ```
 
 ### Connect with ADB
@@ -49,13 +42,14 @@ adb connect localhost:5555
 # Wait for Android to boot (may take 1-2 minutes)
 adb wait-for-device
 
-# Root ADB is useful for Magisk module installation and CI parity
-adb root
-adb wait-for-device
-
 # Check Android version
 adb shell getprop ro.build.version.release
+
+# Launch Magisk directly
+adb shell am start -W -n com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
 ```
+
+`adb root` is optional and mainly useful for debugging or CI parity.
 
 ### Magisk Layout
 
