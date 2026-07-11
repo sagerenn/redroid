@@ -88,14 +88,10 @@ curl -fsSL -o /tmp/vector-module.zip \
   https://github.com/JingMatrix/Vector/releases/download/v2.0/Vector-v2.0-3021-Release.zip
 
 adb push /tmp/vector-module.zip /data/local/tmp/vector-module.zip
-adb shell /data/adb/magisk/magisk --path
+adb push /tmp/vector-module.zip /sdcard/Download/vector-module.zip
 
-adb shell am start -W \
-  -S \
-  -a com.topjohnwu.magisk.intent.FLASH \
-  --es flash_action flash \
-  --es flash_uri file:///data/local/tmp/vector-module.zip \
-  com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
+# Open Magisk, switch to Modules, then use "Install from storage"
+adb shell am start -W -n com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
 
 # The installed module is staged for activation on reboot
 adb shell ls /data/adb/modules_update/zygisk_vector
