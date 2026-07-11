@@ -259,6 +259,13 @@ docker buildx build --platform linux/arm64 --load -f Dockerfile.arm64 -t redroid
 
 ### Container won't start
 - Ensure Docker is running with `--privileged` flag
+- Prepare binderfs on the host before first use:
+
+```bash
+./scripts/prepare-redroid-host.sh
+```
+
+- Do not use `-it` with the redroid container entrypoint. Use `-d` instead. On some hosts, allocating a pseudo-TTY makes `/init` drop to a console shell and the container exits with code `129`.
 - Check kernel support: `uname -r` (need 5.x+ with Android kernel modules)
 - Try with `androidboot.redroid_gpu_mode=guest`
 
