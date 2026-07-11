@@ -121,7 +121,10 @@ docker run -d \
   --privileged \
   --name "$container_name" \
   -p 5555:5555 \
-  "$image_ref"
+  "$image_ref" \
+  androidboot.redroid_gpu_mode=guest \
+  androidboot.use_memfd=1 \
+  ro.secure=0
 
 deadline=$((SECONDS + boot_timeout_seconds))
 adb start-server >/dev/null

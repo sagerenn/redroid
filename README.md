@@ -30,7 +30,7 @@ docker pull ghcr.io/sagerenn/redroid:13-magisk
 ### Run the Container
 
 ```bash
-docker run -d --privileged --name redroid -p 5555:5555 ghcr.io/sagerenn/redroid:13-magisk
+docker run -d --privileged --name redroid -p 5555:5555 ghcr.io/sagerenn/redroid:13-magisk androidboot.redroid_gpu_mode=guest androidboot.use_memfd=1 ro.secure=0
 ```
 
 ### Connect with ADB
