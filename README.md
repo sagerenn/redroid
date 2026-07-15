@@ -231,7 +231,8 @@ docker buildx build -f Dockerfile.arm64 \
 | `REDROID_OUT_IMAGE_TAG` | **required** | e.g. `redroid-base:arm64` |
 | `REDROID_PLATFORM` | `linux/arm64` | passed to `docker import --platform` |
 | `REDROID_SRC` | `$PWD/aosp` | source tree location |
-| `REDROID_JOBS` | `nproc` | `m -jN` (repo sync caps at 2 jobs) |
+| `REDROID_JOBS` | `nproc` | `m -jN` |
+| `REDROID_SYNC_JOBS` | `1` | `repo sync -jN` (keep at 1 on ~100G volumes) |
 | `REDROID_MAKE_TARGETS` | `systemimage vendorimage` | packaging-only targets |
 | `REDROID_SKIP_SYNC` / `REDROID_SKIP_BUILD` | `0` | reuse existing tree/out |
 | `REDROID_CLEAN_SRC` | `0` | set `1` after package to free disk |
@@ -242,7 +243,7 @@ The base image stamps `/system/etc/redroid/redroid-source.env` with tag, lunch, 
 
 GitHub Actions (`.github/workflows/build-redroid.yml`):
 
-1. **`aosp-base`** (always `ubuntu-24.04` x86_64): maximize disk, sync/build AOSP, package base images for both products (`redroid_arm64_only-userdebug` and `redroid_x86_64-userdebug`). Host tools are x86-only; arm64 system images are cross-compiled.
+1. **`aosp-base`** (always `ubuntu-24.04` x86_64): free host toolchains, maximize LVM disk (~120G+), sync/build AOSP with `scripts/aosp-remove-unused.xml` (drops kernel/Pixel/CTS/Car/emulator trees), package base images for both products (`redroid_arm64_only-userdebug` and `redroid_x86_64-userdebug`). Host tools are x86-only; arm64 system images are cross-compiled.
 2. Upload each base as a docker-save artifact.
 3. **`build-test`** on native runners: arm64 on `ubuntu-24.04-arm` (no QEMU), amd64 on `ubuntu-24.04` — load base, layer Magisk prebuilt + non-Zygisk hooks, layout check, e2e.
 4. On `main`, push arch tags and multi-arch manifests to GHCR.

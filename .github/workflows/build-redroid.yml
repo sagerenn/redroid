@@ -36,27 +36,14 @@ jobs:
     timeout-minutes: 720
 
     steps:
-      # Must be first step. Mount a large LVM volume at /mnt/build (not GITHUB_WORKSPACE)
-      # so checkout/clean cannot wipe Docker data-root, and AOSP has ~100G headroom.
-      # Docker images need the large volume too after root is packed with LVM PVs.
-      - name: Maximize build disk space
-        uses: easimon/maximize-build-space@v10
-        with:
-          build-mount-path: /mnt/build
-          root-reserve-mb: 6144
-          temp-reserve-mb: 100
-          swap-size-mb: 4096
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
-
-      - name: Free additional disk on root
+      # Free bulky toolchains BEFORE maximize so their free space is absorbed into the LVM
+      # build volume (post-maximize deletes do not grow the already-created LV).
+      - name: Free disk before maximize
         run: |
           set -eux
           df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
             /usr/local/share/boost /usr/share/swift /usr/local/.ghcup \
             "${AGENT_TOOLSDIRECTORY:-}" /usr/local/graalvm /usr/local/share/chromium \
             /usr/local/share/powershell /usr/share/miniconda /usr/local/miniconda \
@@ -64,13 +51,41 @@ jobs:
             /usr/share/gradle /usr/share/kotlin /usr/local/lib/node_modules \
             /usr/local/share/edge_driver /usr/local/share/gecko_driver \
             /usr/local/share/chrome_driver /usr/local/share/vcpkg \
-            /opt/microsoft /usr/share/sbt || true
+            /opt/microsoft /usr/share/sbt /usr/local/aws-cli /usr/local/aws-sam-cli \
+            /usr/share/apache-maven* /usr/share/rvm /home/linuxbrew || true
+          docker system prune -af || true
           sudo apt-get clean || true
           df -h
+
+      # Mount a large LVM volume at /mnt/build (not GITHUB_WORKSPACE) so checkout/clean
+      # cannot wipe Docker data-root, and AOSP has ~120G+ headroom after pre-free.
+      - name: Maximize build disk space
+        uses: easimon/maximize-build-space@v10
+        with:
+          build-mount-path: /mnt/build
+          root-reserve-mb: 2048
+          temp-reserve-mb: 100
+          swap-size-mb: 2048
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+
+      - name: Verify build volume capacity
+        run: |
+          set -eux
+          df -h
+          # Sweep anything still on root (does not enlarge LVM, only frees root for tooling).
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/local/share/powershell || true
           avail_kb=$(df -Pk /mnt/build | awk 'NR==2 {print $4}')
           echo "build_volume_avail_kb=${avail_kb}"
-          if [ "${avail_kb}" -lt $((85 * 1024 * 1024)) ]; then
-            echo "::error::Build volume only has ${avail_kb} KB free; need >= 85 GiB for AOSP"
+          if [ "${avail_kb}" -lt $((110 * 1024 * 1024)) ]; then
+            echo "::warning::Build volume has ${avail_kb} KB free (<110 GiB ideal); continuing if >= 90 GiB"
+          fi
+          if [ "${avail_kb}" -lt $((90 * 1024 * 1024)) ]; then
+            echo "::error::Build volume only has ${avail_kb} KB free; need >= 90 GiB for AOSP"
             exit 1
           fi
 
@@ -121,6 +136,7 @@ jobs:
           REDROID_SRC: /mnt/build/aosp
           REDROID_TMPDIR: /mnt/build/tmp
           REDROID_JOBS: "4"
+          REDROID_SYNC_JOBS: "1"
           REDROID_CLEAN_SRC: "1"
           REDROID_MAKE_TARGETS: "systemimage vendorimage"
         run: |

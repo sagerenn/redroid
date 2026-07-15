@@ -9,6 +9,7 @@
 #   REDROID_OUT_IMAGE_TAG         docker import tag (required), e.g. redroid-base:arm64
 #   REDROID_PLATFORM              docker --platform for import (default: linux/arm64)
 #   REDROID_JOBS                  make -jN (default: nproc)
+#   REDROID_SYNC_JOBS             repo sync -jN (default: 1; keep low on small disks)
 #   REDROID_SKIP_SYNC             if 1, skip repo init/sync when tree exists
 #   REDROID_SKIP_BUILD            if 1, only package existing out/
 #   REDROID_CLEAN_SRC             if 1, delete source tree after packaging (default: 0)
@@ -18,6 +19,8 @@
 #
 # Requires: docker, git, curl, python3, libxml2-utils (xmllint), git-lfs.
 # CI needs ~100GB+ free on the build volume (partial-clone + system/vendor images).
+# scripts/aosp-remove-unused.xml is copied into .repo/local_manifests to drop kernel/
+# Pixel/CTS/Car/emulator trees that redroid packaging never uses.
 
 set -euo pipefail
 
@@ -116,23 +119,43 @@ sync_tree() {
       https://github.com/remote-android/local_manifests.git .repo/local_manifests
   fi
 
+  # Drop unused multi-GB trees (kernel/Pixel/CTS/Car/emulator) so partial-clone
+  # fits GH Actions ~100–140G build volumes. Idempotent overwrite.
+  if [[ -f $REPO_ROOT/scripts/aosp-remove-unused.xml ]]; then
+    echo "[redroid-src] installing local_manifests/aosp-remove-unused.xml"
+    cp -f "$REPO_ROOT/scripts/aosp-remove-unused.xml" .repo/local_manifests/aosp-remove-unused.xml
+  else
+    echo "[redroid-src] WARNING: scripts/aosp-remove-unused.xml missing; full tree may ENOSPC" >&2
+  fi
+
   # Cap sync parallelism: high -j races many checkouts and trips ENOSPC on ~100G volumes.
-  local sync_jobs=2
-  if [[ "${REDROID_JOBS}" =~ ^[0-9]+$ ]] && [[ $REDROID_JOBS -lt 2 ]]; then
-    sync_jobs=$REDROID_JOBS
+  local sync_jobs=1
+  if [[ "${REDROID_JOBS}" =~ ^[0-9]+$ ]] && [[ $REDROID_JOBS -ge 1 ]]; then
+    # Prefer 1 job on constrained CI disks; allow 2 only when REDROID_SYNC_JOBS set.
+    sync_jobs=${REDROID_SYNC_JOBS:-1}
   fi
 
   echo "[redroid-src] repo sync (partial clone; jobs=${sync_jobs})"
   local attempt
+  local avail_kb
   for attempt in 1 2 3 4; do
     echo "[redroid-src] repo sync attempt ${attempt}/4"
     df -h . || true
+    avail_kb=$(df -Pk . | awk 'NR==2 {print $4}')
+    if [[ -n "${avail_kb}" && "${avail_kb}" -lt $((1024 * 1024)) ]]; then
+      echo "[redroid-src] ERROR: only ${avail_kb} KB free under $REDROID_SRC before sync; aborting retries" >&2
+      du -xh --max-depth=2 "$REDROID_SRC" 2>/dev/null | sort -h | tail -n 40 || true
+      exit 1
+    fi
     # First passes: no --fail-fast so partial progress survives; last pass is strict.
     if [[ $attempt -lt 4 ]]; then
       if repo sync -c -j"$sync_jobs" --no-tags --optimized-fetch --force-sync --no-clone-bundle; then
         break
       fi
       echo "[redroid-src] repo sync attempt ${attempt} failed; retrying..." >&2
+      # Drop incomplete pack/tmp leftovers that can hold space without usable trees.
+      find "$REDROID_SRC/.repo" -type f \( -name 'tmp_*' -o -name '*.lock' -o -name 'trace*' \) \
+        -delete 2>/dev/null || true
       sleep $((attempt * 10))
     else
       repo sync -c -j"$sync_jobs" --no-tags --optimized-fetch --force-sync --no-clone-bundle --fail-fast
@@ -140,6 +163,8 @@ sync_tree() {
   done
 
   df -h . || true
+  echo "[redroid-src] post-sync tree size (top):"
+  du -xh --max-depth=1 "$REDROID_SRC" 2>/dev/null | sort -h | tail -n 30 || true
   echo "[redroid-src] applying redroid patches"
   patches_dir=$(mktemp -d)
   git clone --depth 1 https://github.com/remote-android/redroid-patches.git "$patches_dir"
