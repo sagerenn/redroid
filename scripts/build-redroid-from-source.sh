@@ -165,6 +165,13 @@ sync_tree() {
   df -h . || true
   echo "[redroid-src] post-sync tree size (top):"
   du -xh --max-depth=1 "$REDROID_SRC" 2>/dev/null | sort -h | tail -n 30 || true
+
+  # platform/cts is removed for disk; soong still parses MTS/CTS test Android.bp under
+  # packages/modules/* that defaults: ["cts_defaults"] (e.g. MtsWifiTestCases). Those
+  # leaves are not separate repo projects, so drop them after sync. Never needed for
+  # systemimage/vendorimage.
+  prune_cts_dependent_tests
+
   echo "[redroid-src] applying redroid patches"
   patches_dir=$(mktemp -d)
   git clone --depth 1 https://github.com/remote-android/redroid-patches.git "$patches_dir"
@@ -174,6 +181,45 @@ sync_tree() {
   fi
   "$patches_dir/apply-patch.sh" "$REDROID_SRC" "$REDROID_AOSP_TAG"
   rm -rf "$patches_dir"
+}
+
+# Remove soong leaves that default to cts_defaults after platform/cts is gone.
+# Defined before sync_tree calls it; bash only needs the def before the call runs.
+prune_cts_dependent_tests() {
+  local root=${1:-$REDROID_SRC}
+  local bp dir n=0
+  local search=()
+  echo "[redroid-src] pruning CTS-default MTS/CTS test leaves (platform/cts removed)"
+  for d in packages frameworks platform_testing; do
+    [[ -d $root/$d ]] && search+=("$root/$d")
+  done
+  if [[ ${#search[@]} -eq 0 ]]; then
+    echo "[redroid-src] no packages/frameworks tree yet; skip prune"
+    return 0
+  fi
+  while IFS= read -r -d '' bp; do
+    if grep -Fq 'cts_defaults' "$bp" 2>/dev/null; then
+      dir=$(dirname "$bp")
+      case "$dir" in
+        */tests/*|*/tests|*/mts|*/mts/*|*/cts|*/cts/*)
+          echo "[redroid-src]   drop $dir (cts_defaults)"
+          rm -rf "$dir"
+          n=$((n + 1))
+          ;;
+      esac
+    fi
+  done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
+
+  # Belt-and-suspenders: remove any remaining mts test trees under packages/modules.
+  if [[ -d $root/packages/modules ]]; then
+    while IFS= read -r -d '' dir; do
+      echo "[redroid-src]   drop $dir (mts tree)"
+      rm -rf "$dir"
+      n=$((n + 1))
+    done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
+  fi
+
+  echo "[redroid-src] pruned ${n} CTS-dependent test path(s)"
 }
 
 build_builder_image() {

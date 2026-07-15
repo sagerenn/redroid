@@ -95,7 +95,11 @@
   <remove-project name="device/amlogic/yukawa-kernel" />
   <remove-project name="device/generic/car" />
 
-  <!-- CTS / VTS / MLTS (not needed for systemimage/vendorimage) -->
+  <!-- CTS / VTS / MLTS (not needed for systemimage/vendorimage).
+       platform/cts provides soong module cts_defaults. MTS test leaves under
+       packages/modules/*/tests/mts (e.g. MtsWifiTestCases) still defaults to it;
+       those are not separate repo projects — build-redroid-from-source.sh prunes
+       them post-sync so soong does not fail with "undefined module cts_defaults". -->
   <remove-project name="platform/cts" />
   <remove-project name="platform/test/cts-root" />
   <remove-project name="platform/test/vts" />
