@@ -188,12 +188,15 @@ sync_tree() {
 
 # Remove soong leaves that default to cts_defaults after platform/cts is gone.
 # Defined before sync_tree calls it; bash only needs the def before the call runs.
+# cts_defaults is only defined in platform/cts; any Android.bp that still
+# references it is unused for systemimage/vendorimage and will fail soong.
 prune_cts_dependent_tests() {
   local root=${1:-$REDROID_SRC}
   local bp dir n=0
   local search=()
-  echo "[redroid-src] pruning CTS-default MTS/CTS test leaves (platform/cts removed)"
-  for d in packages frameworks platform_testing; do
+  echo "[redroid-src] pruning CTS-default test leaves (platform/cts removed)"
+  # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; include it.
+  for d in packages frameworks platform_testing tools device; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
   if [[ ${#search[@]} -eq 0 ]]; then
@@ -203,8 +206,9 @@ prune_cts_dependent_tests() {
   while IFS= read -r -d '' bp; do
     if grep -Fq 'cts_defaults' "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
+      # Drop test-like paths first; second pass removes any remaining refs.
       case "$dir" in
-        */tests/*|*/tests|*/mts|*/mts/*|*/cts|*/cts/*)
+        */tests/*|*/tests|*/mts|*/mts/*|*/cts|*/cts/*|*/testing/*|*/testing|*/test/*|*/test)
           echo "[redroid-src]   drop $dir (cts_defaults)"
           rm -rf "$dir"
           n=$((n + 1))
@@ -221,6 +225,18 @@ prune_cts_dependent_tests() {
       n=$((n + 1))
     done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
   fi
+
+  # Final pass: any leftover Android.bp that still names cts_defaults (e.g.
+  # tools/platform-compat/.../testing/app) — remove the leaf directory.
+  # Safe for redroid packaging: cts_defaults only comes from platform/cts.
+  while IFS= read -r -d '' bp; do
+    if grep -Fq 'cts_defaults' "$bp" 2>/dev/null; then
+      dir=$(dirname "$bp")
+      echo "[redroid-src]   drop $dir (cts_defaults leftover)"
+      rm -rf "$dir"
+      n=$((n + 1))
+    fi
+  done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
 
   echo "[redroid-src] pruned ${n} CTS-dependent test path(s)"
 }
