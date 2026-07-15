@@ -40,10 +40,19 @@ require_path /system/etc/redroid/magisk/magisk
 require_path /system/etc/redroid/magisk/magiskboot
 require_path /system/etc/redroid/magisk/magiskinit
 require_path /system/etc/redroid/magisk/magiskpolicy
-require_path /system/etc/redroid/magisk-source.env
+require_path /system/etc/redroid/magisk-prebuilt.env
 require_path /system/etc/redroid/hook/redroid-hook.sh
 require_path /system/etc/redroid/hook/redroid_hook.zip
 require_path /system/etc/redroid/hook/configs/example-stackplz.json
+# Present when BASE_IMAGE was built via scripts/build-redroid-from-source.sh
+# (optional when layering on upstream redroid/* for local quick builds).
+if docker cp "$container_id:/system/etc/redroid/redroid-source.env" /tmp/verify-redroid-source.env >/dev/null 2>&1; then
+  echo "redroid-source.env present (built from AOSP)"
+  cat /tmp/verify-redroid-source.env || true
+  rm -f /tmp/verify-redroid-source.env
+else
+  echo "warning: redroid-source.env missing (base may be upstream prebuilt)" >&2
+fi
 require_path /data/local/tmp/tools/arm64/frida-server
 require_path /data/local/tmp/tools/arm64/ecapture
 require_path /data/local/tmp/tools/arm64/lldb-server

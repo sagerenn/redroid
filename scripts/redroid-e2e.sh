@@ -169,8 +169,15 @@ adb -s "$adb_serial" shell id | grep -q 'uid=0'
 adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 wait_for_device_test 30 'Magisk preinit device' "test -b /debug_ramdisk/.magisk/device/preinit"
 
-# Magisk-from-source metadata and non-Zygisk hook scaffolding
-adb -s "$adb_serial" shell test -f /system/etc/redroid/magisk-source.env
+# Magisk prebuilt metadata + redroid-from-source stamp + non-Zygisk hooks
+adb -s "$adb_serial" shell test -f /system/etc/redroid/magisk-prebuilt.env
+if adb -s "$adb_serial" shell test -f /system/etc/redroid/redroid-source.env; then
+  adb -s "$adb_serial" shell cat /system/etc/redroid/redroid-source.env | tee /tmp/redroid-source.env
+  grep -q 'redroid_aosp_tag=' /tmp/redroid-source.env
+  grep -q 'redroid_lunch=' /tmp/redroid-source.env
+else
+  echo "warning: redroid-source.env missing (base may be upstream prebuilt)" >&2
+fi
 adb -s "$adb_serial" shell test -x /system/etc/redroid/hook/redroid-hook.sh
 adb -s "$adb_serial" shell test -f /system/etc/redroid/hook/redroid_hook.zip
 wait_for_device_test 60 'non-Zygisk hook module' 'test -f /data/adb/modules/redroid_hook/module.prop'
