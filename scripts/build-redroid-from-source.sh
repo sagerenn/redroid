@@ -216,12 +216,13 @@ run_aosp_build() {
      elif [ -d prebuilts/jdk/jdk11 ]; then
        export PATH=\"/src/prebuilts/jdk/jdk11/linux-x86/bin:\$PATH\"
      fi
-     # envsetup/lunch reference optional unbound vars (TOP, ZSH_VERSION, …);
-     # nounset (-u) breaks AOSP bash setup on set -u shells.
+     # AOSP envsetup/lunch/m touch optional unbound vars (TOP, ZSH_VERSION, …).
+     # Keep nounset off for the whole compile — re-enabling -u after lunch still
+     # aborts inside m()/gettop() with 'TOP: unbound variable'.
      set +u
+     export TOP=/src ANDROID_BUILD_TOP=/src
      . build/envsetup.sh
      lunch ${REDROID_LUNCH}
-     set -u
      # shellcheck disable=SC2086
      m -j${REDROID_JOBS} ${targets}
     "
