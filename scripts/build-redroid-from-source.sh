@@ -171,6 +171,9 @@ sync_tree() {
   # leaves are not separate repo projects, so drop them after sync. Never needed for
   # systemimage/vendorimage.
   prune_cts_dependent_tests
+  # Drop leftover trees that depend on removed Car/cuttlefish modules (belt-and-suspenders
+  # if remove-project was missed or a nested leaf remains).
+  prune_removed_product_orphans
 
   echo "[redroid-src] applying redroid patches"
   patches_dir=$(mktemp -d)
@@ -220,6 +223,51 @@ prune_cts_dependent_tests() {
   fi
 
   echo "[redroid-src] pruned ${n} CTS-dependent test path(s)"
+}
+
+# Drop trees that depend on modules from removed Car / cuttlefish projects.
+# aosp-remove-unused.xml removes the parent projects; this cleans nested leftovers.
+prune_removed_product_orphans() {
+  local root=${1:-$REDROID_SRC}
+  local path n=0
+  echo "[redroid-src] pruning Car/cuttlefish-dependent leftover paths"
+  local paths=(
+    tools/security
+    device/generic/opengl-transport
+    device/google/cuttlefish
+    device/google/cuttlefish_prebuilts
+  )
+  for path in "${paths[@]}"; do
+    if [[ -e $root/$path ]]; then
+      echo "[redroid-src]   drop $root/$path (removed-product orphan)"
+      rm -rf "$root/$path"
+      n=$((n + 1))
+    fi
+  done
+
+  # Any remaining Android.bp that still defaults to carwatchdog* / cuttlefish_buildhost_only
+  # under tools/ or device/ — drop their directories (test/fuzzer leaves only).
+  local bp dir
+  local search=()
+  for d in tools device; do
+    [[ -d $root/$d ]] && search+=("$root/$d")
+  done
+  if [[ ${#search[@]} -gt 0 ]]; then
+    while IFS= read -r -d '' bp; do
+      if grep -Eq 'carwatchdogd_defaults|libwatchdog_perf_service_defaults|cuttlefish_buildhost_only' "$bp" 2>/dev/null; then
+        dir=$(dirname "$bp")
+        case "$dir" in
+          */fuzz*|*/fuzzer*|*/fuzzers*|*/tests/*|*/tests|*/host/*|*/cuttlefish*|*/opengl-transport*)
+            echo "[redroid-src]   drop $dir (car/cuttlefish soong dep)"
+            rm -rf "$dir"
+            n=$((n + 1))
+            ;;
+        esac
+      fi
+    done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
+  fi
+
+  echo "[redroid-src] pruned ${n} Car/cuttlefish orphan path(s)"
 }
 
 build_builder_image() {
