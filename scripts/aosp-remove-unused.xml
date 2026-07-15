@@ -15,8 +15,11 @@
   <remove-project name="platform/prebuilts/android-emulator" />
   <remove-project name="platform/prebuilts/qemu-kernel" />
 
-  <!-- Kernel prebuilts and tests (PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS := false) -->
-  <remove-project name="kernel/configs" />
+  <!-- Kernel prebuilts and tests.
+       Keep kernel/configs: soong module kernel-config-soong-rules is required by
+       hardware/interfaces/compatibility_matrices even when redroid disables
+       PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS. Removing it fails lunch/m with
+       undefined module "kernel-config-soong-rules". -->
   <remove-project name="kernel/tests" />
   <remove-project name="kernel/prebuilts/4.19/arm64" />
   <remove-project name="kernel/prebuilts/5.4/arm64" />
