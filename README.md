@@ -169,7 +169,7 @@ adb shell am start -W -n org.lsposed.manager/org.lsposed.manager.ui.activity.Mai
 ### Prerequisites
 
 - Docker with BuildKit support
-- ~**200GB free disk** for a full AOSP sync + compile (or use upstream prebuilt base for a quick Magisk-only layer)
+- ~**100GB+ free disk** for AOSP partial-clone + `systemimage`/`vendorimage` (or use upstream prebuilt base for a quick Magisk-only layer)
 - Native host arch matching the Dockerfile you build (prefer arm64 on arm64)
 
 ### Full pipeline (redroid from source + Magisk layer)
@@ -231,7 +231,8 @@ docker buildx build -f Dockerfile.arm64 \
 | `REDROID_OUT_IMAGE_TAG` | **required** | e.g. `redroid-base:arm64` |
 | `REDROID_PLATFORM` | `linux/arm64` | passed to `docker import --platform` |
 | `REDROID_SRC` | `$PWD/aosp` | source tree location |
-| `REDROID_JOBS` | `nproc` | `m -jN` |
+| `REDROID_JOBS` | `nproc` | `m -jN` (repo sync caps at 2 jobs) |
+| `REDROID_MAKE_TARGETS` | `systemimage vendorimage` | packaging-only targets |
 | `REDROID_SKIP_SYNC` / `REDROID_SKIP_BUILD` | `0` | reuse existing tree/out |
 | `REDROID_CLEAN_SRC` | `0` | set `1` after package to free disk |
 

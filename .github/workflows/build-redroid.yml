@@ -36,19 +36,23 @@ jobs:
     timeout-minutes: 720
 
     steps:
+      # Must be first step. Mount a large LVM volume at /mnt/build (not GITHUB_WORKSPACE)
+      # so checkout/clean cannot wipe Docker data-root, and AOSP has ~100G headroom.
+      # Docker images need the large volume too after root is packed with LVM PVs.
       - name: Maximize build disk space
         uses: easimon/maximize-build-space@v10
-        continue-on-error: true
         with:
-          root-reserve-mb: 8192
-          swap-size-mb: 8192
+          build-mount-path: /mnt/build
+          root-reserve-mb: 6144
+          temp-reserve-mb: 100
+          swap-size-mb: 4096
           remove-dotnet: true
           remove-android: true
           remove-haskell: true
           remove-codeql: true
           remove-docker-images: true
 
-      - name: Free additional disk
+      - name: Free additional disk on root
         run: |
           set -eux
           df -h
@@ -56,10 +60,34 @@ jobs:
             /usr/local/share/boost /usr/share/swift /usr/local/.ghcup \
             "${AGENT_TOOLSDIRECTORY:-}" /usr/local/graalvm /usr/local/share/chromium \
             /usr/local/share/powershell /usr/share/miniconda /usr/local/miniconda \
-            /usr/lib/jvm || true
+            /usr/lib/jvm /opt/hostedtoolcache /usr/share/az_* /opt/az \
+            /usr/share/gradle /usr/share/kotlin /usr/local/lib/node_modules \
+            /usr/local/share/edge_driver /usr/local/share/gecko_driver \
+            /usr/local/share/chrome_driver /usr/local/share/vcpkg \
+            /opt/microsoft /usr/share/sbt || true
           sudo apt-get clean || true
-          docker system prune -af || true
           df -h
+          avail_kb=$(df -Pk /mnt/build | awk 'NR==2 {print $4}')
+          echo "build_volume_avail_kb=${avail_kb}"
+          if [ "${avail_kb}" -lt $((85 * 1024 * 1024)) ]; then
+            echo "::error::Build volume only has ${avail_kb} KB free; need >= 85 GiB for AOSP"
+            exit 1
+          fi
+
+      - name: Point Docker data-root at build volume
+        run: |
+          set -euo pipefail
+          docker_root=/mnt/build/docker-data
+          mkdir -p "$docker_root"
+          sudo systemctl stop docker.socket docker || true
+          sudo mkdir -p /etc/docker
+          if [ -f /etc/docker/daemon.json ]; then
+            sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
+          fi
+          printf '%s\n' "{\"data-root\":\"${docker_root}\"}" | sudo tee /etc/docker/daemon.json
+          sudo systemctl start docker
+          docker info | grep -E 'Docker Root Dir|Storage Driver'
+          df -h /mnt/build /
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,6 +105,8 @@ jobs:
           echo "$HOME/bin" >> "$GITHUB_PATH"
           git config --global user.email "ci@github-actions.local"
           git config --global user.name "github-actions"
+          git config --global gc.auto 0
+          git config --global maintenance.auto false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -88,26 +118,35 @@ jobs:
           REDROID_LUNCH: ${{ matrix.lunch }}
           REDROID_OUT_IMAGE_TAG: ${{ matrix.base_tag }}
           REDROID_PLATFORM: ${{ matrix.platform }}
-          REDROID_SRC: ${{ github.workspace }}/aosp
+          REDROID_SRC: /mnt/build/aosp
+          REDROID_TMPDIR: /mnt/build/tmp
           REDROID_JOBS: "4"
           REDROID_CLEAN_SRC: "1"
+          REDROID_MAKE_TARGETS: "systemimage vendorimage"
         run: |
           chmod +x scripts/build-redroid-from-source.sh
+          mkdir -p /mnt/build/aosp /mnt/build/tmp
           ./scripts/build-redroid-from-source.sh
+          df -h
+          docker system df || true
 
       - name: Export base image artifact
         run: |
           set -euo pipefail
           docker image inspect "${{ matrix.base_tag }}" --format '{{.Id}} {{.Architecture}} {{.Size}}'
-          mkdir -p artifacts
-          docker save "${{ matrix.base_tag }}" | gzip -1 > "artifacts/${{ matrix.base_tag }}.tar.gz"
-          ls -lh "artifacts/${{ matrix.base_tag }}.tar.gz"
+          mkdir -p /mnt/build/artifacts
+          # Drop builder image before save to free Docker storage.
+          docker rmi redroid-aosp-builder || true
+          docker system prune -af || true
+          docker save "${{ matrix.base_tag }}" | gzip -1 > "/mnt/build/artifacts/${{ matrix.base_tag }}.tar.gz"
+          ls -lh "/mnt/build/artifacts/${{ matrix.base_tag }}.tar.gz"
+          df -h
 
       - name: Upload base image
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.base_tag }}
-          path: artifacts/${{ matrix.base_tag }}.tar.gz
+          path: /mnt/build/artifacts/${{ matrix.base_tag }}.tar.gz
           retention-days: 3
           if-no-files-found: error
 

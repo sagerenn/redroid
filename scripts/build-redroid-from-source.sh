@@ -12,9 +12,12 @@
 #   REDROID_SKIP_SYNC             if 1, skip repo init/sync when tree exists
 #   REDROID_SKIP_BUILD            if 1, only package existing out/
 #   REDROID_CLEAN_SRC             if 1, delete source tree after packaging (default: 0)
+#   REDROID_MAKE_TARGETS          make targets (default: systemimage vendorimage)
+#   REDROID_TMPDIR                temp dir on the large volume (default: $REDROID_SRC/.tmp)
 #   BUILDER_IMAGE                  builder image tag (default: redroid-aosp-builder)
 #
-# Requires: docker, git, curl, python3, libxml2-utils (xmllint), git-lfs, ~200GB free disk.
+# Requires: docker, git, curl, python3, libxml2-utils (xmllint), git-lfs.
+# CI needs ~100GB+ free on the build volume (partial-clone + system/vendor images).
 
 set -euo pipefail
 
@@ -84,12 +87,26 @@ ensure_git_lfs() {
 
 sync_tree() {
   mkdir -p "$REDROID_SRC"
+  # Keep temp/git scratch on the large build volume (not root /, which is tight after maximize).
+  export TMPDIR="${REDROID_TMPDIR:-$REDROID_SRC/.tmp}"
+  mkdir -p "$TMPDIR"
+  export TMP="$TMPDIR" TEMP="$TMPDIR"
+  # Reduce concurrent git write pressure and auto-maintenance on constrained CI disks.
+  git config --global gc.auto 0 || true
+  git config --global maintenance.auto false || true
+  git config --global core.fsync none || true
+
   cd "$REDROID_SRC"
+  df -h . || true
 
   if [[ ! -d .repo/manifests ]]; then
-    echo "[redroid-src] repo init ${REDROID_AOSP_TAG}"
+    echo "[redroid-src] repo init ${REDROID_AOSP_TAG} (partial-clone, depth=1)"
+    # Official AOSP partial-clone keeps the tree under a full ~100GB+ checkout so
+    # it fits GitHub Actions ~100G build volumes. blob:none defers blob downloads
+    # until needed; --no-clone-bundle avoids large prebuilt bundles.
     repo init -u https://android.googlesource.com/platform/manifest \
-      --git-lfs --depth=1 -b "$REDROID_AOSP_TAG"
+      --git-lfs --depth=1 --partial-clone --clone-filter=blob:none \
+      --no-use-superproject --no-clone-bundle -b "$REDROID_AOSP_TAG"
   fi
 
   if [[ ! -d .repo/local_manifests/.git ]]; then
@@ -99,11 +116,30 @@ sync_tree() {
       https://github.com/remote-android/local_manifests.git .repo/local_manifests
   fi
 
-  echo "[redroid-src] repo sync (this downloads ~100GB+)"
-  # -c current branch only; -j parallel; --fail-fast stops on first hard error after retries
-  repo sync -c -j"$REDROID_JOBS" --fail-fast --no-tags --optimized-fetch || \
-    repo sync -c -j"$REDROID_JOBS" --fail-fast --no-tags --optimized-fetch
+  # Cap sync parallelism: high -j races many checkouts and trips ENOSPC on ~100G volumes.
+  local sync_jobs=2
+  if [[ "${REDROID_JOBS}" =~ ^[0-9]+$ ]] && [[ $REDROID_JOBS -lt 2 ]]; then
+    sync_jobs=$REDROID_JOBS
+  fi
 
+  echo "[redroid-src] repo sync (partial clone; jobs=${sync_jobs})"
+  local attempt
+  for attempt in 1 2 3 4; do
+    echo "[redroid-src] repo sync attempt ${attempt}/4"
+    df -h . || true
+    # First passes: no --fail-fast so partial progress survives; last pass is strict.
+    if [[ $attempt -lt 4 ]]; then
+      if repo sync -c -j"$sync_jobs" --no-tags --optimized-fetch --force-sync --no-clone-bundle; then
+        break
+      fi
+      echo "[redroid-src] repo sync attempt ${attempt} failed; retrying..." >&2
+      sleep $((attempt * 10))
+    else
+      repo sync -c -j"$sync_jobs" --no-tags --optimized-fetch --force-sync --no-clone-bundle --fail-fast
+    fi
+  done
+
+  df -h . || true
   echo "[redroid-src] applying redroid patches"
   patches_dir=$(mktemp -d)
   git clone --depth 1 https://github.com/remote-android/redroid-patches.git "$patches_dir"
@@ -131,14 +167,23 @@ build_builder_image() {
 }
 
 run_aosp_build() {
-  echo "[redroid-src] compiling ${REDROID_LUNCH} with -j${REDROID_JOBS}"
+  # Only the images used by docker import (official redroid-doc packaging).
+  # Full `m` builds host tools, tests, and extras that blow past GH runner disks.
+  local targets=${REDROID_MAKE_TARGETS:-systemimage vendorimage}
+  echo "[redroid-src] compiling ${REDROID_LUNCH} targets=[${targets}] with -j${REDROID_JOBS}"
+  df -h "$REDROID_SRC" || true
   # Privileged helps with some bind mounts / filesystem edge cases on CI.
+  # TMPDIR inside the container also on the bind-mounted tree.
   docker run --rm --privileged \
     --hostname redroid-builder \
     -v "$REDROID_SRC:/src" \
     -e HOME=/home/$(id -un) \
+    -e TMPDIR=/src/.tmp \
+    -e TMP=/src/.tmp \
+    -e TEMP=/src/.tmp \
     "$BUILDER_IMAGE" \
     "set -euo pipefail
+     mkdir -p /src/.tmp
      cd /src
      # Prefer prebuilt JDK from the tree when present
      if [ -d prebuilts/jdk/jdk17 ]; then
@@ -148,8 +193,10 @@ run_aosp_build() {
      fi
      . build/envsetup.sh
      lunch ${REDROID_LUNCH}
-     m -j${REDROID_JOBS}
+     # shellcheck disable=SC2086
+     m -j${REDROID_JOBS} ${targets}
     "
+  df -h "$REDROID_SRC" || true
 }
 
 package_image() {
