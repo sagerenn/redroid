@@ -105,9 +105,8 @@ jobs:
             /opt/hostedtoolcache /usr/local/share/powershell \
             /var/lib/apt/lists/* /var/cache/apt/archives/* || true
           sudo apt-get clean || true
-          # Host temp + agent caches off root so residual ~100MB free is enough.
-          mkdir -p /mnt/build/tmp /mnt/build/home /mnt/build/src /mnt/build/artifacts
-          # Prefer build volume for anything that would otherwise land on /.
+          # Host temp + caches off root so residual ~100MB free on / is enough.
+          mkdir -p /mnt/build/tmp /mnt/build/home/.cache /mnt/build/artifacts
           echo "TMPDIR=/mnt/build/tmp" >> "$GITHUB_ENV"
           echo "TMP=/mnt/build/tmp" >> "$GITHUB_ENV"
           echo "TEMP=/mnt/build/tmp" >> "$GITHUB_ENV"
@@ -139,18 +138,15 @@ jobs:
           docker info | grep -E 'Docker Root Dir|Storage Driver'
           df -h /mnt/build /
 
-      # Absolute path: checkout resolves under $GITHUB_WORKSPACE, but path.resolve
-      # keeps an absolute path so the repo lands on the LVM, not full root.
+      # Repo is tiny; stay under $GITHUB_WORKSPACE (checkout rejects paths outside it).
+      # Heavy trees (AOSP, Docker data-root, artifacts) live on /mnt/build.
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          path: /mnt/build/src
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build redroid base from AOSP source
-        working-directory: /mnt/build/src
         env:
           REDROID_AOSP_TAG: ${{ env.REDROID_AOSP_TAG }}
           REDROID_LOCAL_MANIFEST_BRANCH: ${{ env.REDROID_LOCAL_MANIFEST_BRANCH }}
@@ -171,7 +167,6 @@ jobs:
           docker system df || true
 
       - name: Export base image artifact
-        working-directory: /mnt/build/src
         run: |
           set -euo pipefail
           docker image inspect "${{ matrix.base_tag }}" --format '{{.Id}} {{.Architecture}} {{.Size}}'
