@@ -1,15 +1,18 @@
-# Redroid 13 with Magisk
+# Redroid 13 with Magisk (from source)
 
-Docker images for Android 13 (redroid) with a boot-time Magisk runtime bootstrap from `/system/etc/redroid/magisk`, automatic user-app preparation for the Magisk UI, and support for both ARM64 and AMD64 hosts.
+Docker images for Android 13 (redroid) with **Magisk built from source** at image build time, a boot-time Magisk runtime bootstrap from `/system/etc/redroid/magisk`, automatic user-app preparation for the Magisk UI, **non-Zygisk** eBPF/CLI runtime hook tooling, and support for both ARM64 and AMD64 hosts.
 
 ## Features
 
 - **Android 13** running in Docker containers
-- **Magisk** app auto-prepared as a user app at boot
+- **Magisk built from source** (default pin: `v30.7` debug APK) — not a prebuilt APK download
+- **Magisk app** auto-prepared as a user app at boot
 - **Magisk runtime payload** staged at `/system/etc/redroid/magisk` and copied into `/data/adb/magisk` at boot
+- **Non-Zygisk runtime hooks** via stackplz / eDBG / ecapture (no `zygisk/` payload — avoids iJiami Zygisk detection)
 - **Pre-staged debugging tools** under `/data/local/tmp/tools`
 - **Multi-architecture**: ARM64 64-bit-only and AMD64 with ARM64 translation
-- **Real runtime smoke test** in GitHub Actions
+- **Native arm64 CI** on `ubuntu-24.04-arm` (no QEMU user-mode for the arm64 image build)
+- **Real runtime smoke test** in GitHub Actions (amd64 + arm64)
 - **Pre-built images** available on GitHub Container Registry
 
 ## Quick Start
@@ -67,14 +70,55 @@ The image carries both the runtime files used by the module installer and the AP
 - Magisk app-visible CLI entrypoints: `/system/bin/magisk`, `/system/bin/su`, `/system/xbin/su`
 - Runtime payload in the image: `/system/etc/redroid/magisk`
 - Runtime payload after boot bootstrap: `/data/adb/magisk`
+- Source build metadata: `/system/etc/redroid/magisk-source.env`
 - Boot-prepared device-protected app dir: `/data/user_de/0/com.topjohnwu.magisk`
 
 The boot bootstrap installs the original Magisk app as a user app when needed. Verify it is present and launch it:
 
 ```bash
+adb shell cat /system/etc/redroid/magisk-source.env
 adb shell pm path com.topjohnwu.magisk
 adb shell cmd package resolve-activity --brief com.topjohnwu.magisk
 adb shell am start -W -n com.topjohnwu.magisk/com.topjohnwu.magisk.ui.MainActivity
+```
+
+### Non-Zygisk Runtime Hooks
+
+These images **do not** ship Zygisk modules for hooking. iJiami and similar packers detect Zygisk; instead the image stages eBPF/CLI tools and a script-only Magisk module.
+
+Staged paths:
+
+| Path | Purpose |
+|------|---------|
+| `/data/local/tmp/tools/arm64/{stackplz,eDBG,ecapture,frida-server,lldb-server,eBPFDexDumper}` | arm64 tooling |
+| `/data/local/tmp/tools/x86_64/{frida-server,ecapture,lldb-server}` | amd64 host tooling |
+| `/system/etc/redroid/hook/redroid-hook.sh` | device helper (`prepare` / `stackplz` / `edbg` / `ecapture` / `which`) |
+| `/data/local/tmp/redroid-hook` | convenience copy after boot |
+| `/data/adb/modules/redroid_hook/` | Magisk module (**scripts only**, no `zygisk/`) |
+| `/data/local/tmp/hooks/configs/` | example configs |
+
+```bash
+# Inventory (must show stackplz / eDBG / ecapture on arm64 tools dir)
+adb shell /system/etc/redroid/hook/redroid-hook.sh which
+
+# Prepare configs + tool perms
+adb shell /system/etc/redroid/hook/redroid-hook.sh prepare
+
+# Example: stackplz attach to a package (root required)
+adb shell /system/etc/redroid/hook/redroid-hook.sh stackplz --name com.example.app --symbol open
+
+# Example: eDBG breakpoint (arm64)
+adb shell /system/etc/redroid/hook/redroid-hook.sh edbg --package com.example.app --lib libfoo.so --break 0x1234
+
+# Example: ecapture TLS capture
+adb shell /system/etc/redroid/hook/redroid-hook.sh ecapture tls -p <pid>
+```
+
+Confirm the hook Magisk module has **no** Zygisk payload:
+
+```bash
+adb shell test ! -d /data/adb/modules/redroid_hook/zygisk
+adb shell cat /data/adb/modules/redroid_hook/module.prop
 ```
 
 ### Install Vector Module
@@ -109,30 +153,30 @@ adb shell am start -W -n org.lsposed.manager/org.lsposed.manager.ui.activity.Mai
 - Avoids 32-bit userspace requirements on ARM64 cloud hosts
 - Best performance on ARM64 hosts (e.g., Apple Silicon, ARM servers)
 - Image: `ghcr.io/sagerenn/redroid:13-magisk-arm64`
+- **CI builds natively on `ubuntu-24.04-arm`** (no QEMU)
 
 ### AMD64
 - Includes ARM64 app translation via `libndk_translation`
 - Works on standard x86_64 servers
 - Slightly lower performance due to translation layer
 - Image: `ghcr.io/sagerenn/redroid:13-magisk-amd64`
+- Ships both `x86_64` and `arm64` tool trees (arm64 tools run under ndk translation for ARM apps)
 
 ## Building Locally
 
 ### Prerequisites
 - Docker with BuildKit support
-- Multi-architecture build support (via QEMU)
+- Native host arch matching the Dockerfile you build (or a multi-arch builder). Prefer building arm64 on arm64 hosts.
 
 ### Build Commands
 
 ```bash
-# Set up QEMU for cross-platform builds
-docker run --rm --privileged tonistiigi/binfmt --install all
-
-# Build ARM64 image
+# Build ARM64 image (prefer on an arm64 host / runner)
 docker buildx build \
   --platform linux/arm64 \
   -f Dockerfile.arm64 \
   -t redroid:13-magisk-arm64 \
+  --build-arg BUILDPLATFORM=linux/arm64 \
   --load \
   .
 
@@ -141,50 +185,56 @@ docker buildx build \
   --platform linux/amd64 \
   -f Dockerfile.amd64 \
   -t redroid:13-magisk-amd64 \
+  --build-arg BUILDPLATFORM=linux/amd64 \
   --load \
   .
+
+# Optional: pin a different Magisk git ref
+docker buildx build -f Dockerfile.arm64 \
+  --build-arg MAGISK_REF=v30.7 \
+  -t redroid:13-magisk-arm64 --load .
 ```
+
+The first stage clones [topjohnwu/Magisk](https://github.com/topjohnwu/Magisk), installs ONDK via `./build.py ndk`, builds `native` + `app` (debug by default), extracts `lib*/lib{magisk,busybox,...}.so` and assets into `/system/etc/redroid/magisk`, and writes `magisk-source.env`.
 
 ## CI/CD
 
-This project uses GitHub Actions to automatically:
-- Build Docker images for ARM64 and AMD64
-- Verify image layout, including the staged Magisk runtime
-- Boot redroid on a hosted Ubuntu runner
-- Start Magisk, open its UI sections, install the Vector Magisk module through the Magisk app flow, and launch the Vector manager app
-- Install and launch `yuntai.apk`
-- Push to GitHub Container Registry
-- Create multi-arch manifests
+GitHub Actions (`.github/workflows/build-redroid.yml`):
 
-The workflow runs on every push to main and can be triggered manually.
+| Job | Runner | Purpose |
+|-----|--------|---------|
+| `verify-image` | `ubuntu-24.04-arm` + `ubuntu-24.04` | Native multi-stage Docker build + layout checks |
+| `runtime-test` | same native matrix | Boot redroid, Magisk UI, Vector flash, hook asserts |
+| `publish` / `manifest` | same | Push GHCR tags + multi-arch manifests (main only) |
+
+- **No** `docker/setup-qemu-action` for arm64 — arm64 jobs run on arm64 VMs.
+- Magisk source compile is long; jobs use 360-minute timeouts and GHA build cache scoped per arch.
+- E2E asserts Magisk-from-source metadata, non-Zygisk hook module (`id=redroid_hook`), and that **`zygisk/` is absent** under the hook module.
 
 ## Magisk Details
 
-- **Version**: Latest stable release (automatically downloaded during build)
+- **Build**: from source via `scripts/build-magisk-from-source.sh` (default ref `v30.7`, type `debug`)
 - **Primary app package**: `com.topjohnwu.magisk`
 - **APK mirror**: `/tmp/magisk.apk`
 - **Runtime manager APK**: `/tmp/magisk-manager.apk`
 - **CLI entrypoints on shell PATH**: `/system/bin/magisk`, `/system/bin/su`, `/system/xbin/su`
 - **Image-staged runtime payload**: `/system/etc/redroid/magisk`
 - **Bootstrapped runtime path**: `/data/adb/magisk`
+- **Source metadata**: `/system/etc/redroid/magisk-source.env`
 - **Boot-prepared device-protected app dir**: `/data/user_de/0/com.topjohnwu.magisk`
 - **Module CLI**: `/data/adb/magisk/magisk --install-module <zip>`
-- **Source**: Official Magisk releases from [topjohnwu/Magisk](https://github.com/topjohnwu/Magisk)
+- **Upstream**: [topjohnwu/Magisk](https://github.com/topjohnwu/Magisk)
 
 ## Bundled Tools
 
-The image now stages architecture-specific debugging binaries under `/data/local/tmp/tools`.
-
-Available now:
+Architecture-specific binaries under `/data/local/tmp/tools`:
 
 - `frida-server`
 - `ecapture`
-- `eDBG`
+- `eDBG` (`arm64` only)
 - `lldb-server`
 - `eBPFDexDumper` (`arm64` only)
 - `stackplz` (`arm64` only)
-
-Layout examples:
 
 ```bash
 adb shell ls /data/local/tmp/tools/arm64
@@ -194,6 +244,7 @@ adb shell ls /data/local/tmp/tools/x86_64
 Notes:
 
 - `eDBG`, `eBPFDexDumper`, and `stackplz` are Android `arm64` binaries. They are staged into the `arm64` image directly, and also shipped inside the `amd64` image under `/data/local/tmp/tools/arm64` for translated ARM64 app workflows.
+- Hook helpers intentionally avoid Zygisk so packers that scan for Zygisk (e.g. iJiami) do not flag the hook module itself.
 
 ## Advanced Usage
 
@@ -237,12 +288,12 @@ adb connect localhost:5556
 
 ## Testing
 
-Run the core checks locally:
-
 ```bash
-# Build both images
-docker buildx build --platform linux/amd64 --load -f Dockerfile.amd64 -t redroid-test:amd64 .
-docker buildx build --platform linux/arm64 --load -f Dockerfile.arm64 -t redroid-test:arm64 .
+# Build both images (on matching hosts)
+docker buildx build --platform linux/amd64 --load -f Dockerfile.amd64 \
+  --build-arg BUILDPLATFORM=linux/amd64 -t redroid-test:amd64 .
+docker buildx build --platform linux/arm64 --load -f Dockerfile.arm64 \
+  --build-arg BUILDPLATFORM=linux/arm64 -t redroid-test:arm64 .
 
 # Verify image layout
 ./scripts/verify-image-layout.sh redroid-test:amd64 amd64
@@ -278,8 +329,15 @@ docker buildx build --platform linux/arm64 --load -f Dockerfile.arm64 -t redroid
 - Ensure Android has fully booted: `adb shell getprop sys.boot_completed` should return `1`
 - Ensure root ADB is enabled for the CLI flow: `adb root`
 - Verify the staged runtime exists: `adb shell ls /data/adb/magisk`
+- Check source build metadata: `adb shell cat /system/etc/redroid/magisk-source.env`
 - Check available space: `adb shell df -h /data`
 - Try rebooting: `adb reboot`
+
+### Magisk source build fails in Docker
+- Confirm JDK 21 is on `PATH` (`javac -version`)
+- Confirm Android SDK packages `platforms;android-36` and `build-tools;36.1.0` install
+- Override `MAGISK_REF` if a tag is unavailable
+- Build logs are long; give the stage 30–90+ minutes on first compile
 
 ## License
 

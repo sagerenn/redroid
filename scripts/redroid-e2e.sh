@@ -169,6 +169,22 @@ adb -s "$adb_serial" shell id | grep -q 'uid=0'
 adb -s "$adb_serial" shell /data/adb/magisk/magisk -v >/dev/null
 wait_for_device_test 30 'Magisk preinit device' "test -b /debug_ramdisk/.magisk/device/preinit"
 
+# Magisk-from-source metadata and non-Zygisk hook scaffolding
+adb -s "$adb_serial" shell test -f /system/etc/redroid/magisk-source.env
+adb -s "$adb_serial" shell test -x /system/etc/redroid/hook/redroid-hook.sh
+adb -s "$adb_serial" shell test -f /system/etc/redroid/hook/redroid_hook.zip
+wait_for_device_test 60 'non-Zygisk hook module' 'test -f /data/adb/modules/redroid_hook/module.prop'
+adb -s "$adb_serial" shell grep -q '^id=redroid_hook$' /data/adb/modules/redroid_hook/module.prop
+# Guard: never ship Zygisk payload for this module (iJiami detects Zygisk)
+if adb -s "$adb_serial" shell test -d /data/adb/modules/redroid_hook/zygisk 2>/dev/null; then
+  echo "hook module unexpectedly contains zygisk/ payload" >&2
+  exit 1
+fi
+adb -s "$adb_serial" shell test -x /data/local/tmp/redroid-hook || \
+  adb -s "$adb_serial" shell test -x /system/etc/redroid/hook/redroid-hook.sh
+adb -s "$adb_serial" shell /system/etc/redroid/hook/redroid-hook.sh which | tee /tmp/redroid-hook-which.txt
+grep -Eq 'stackplz=|eDBG=|ecapture=' /tmp/redroid-hook-which.txt
+
 magisk_pkg='com.topjohnwu.magisk'
 magisk_flash_action='com.topjohnwu.magisk.intent.FLASH'
 magisk_section_key='section'

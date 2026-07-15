@@ -1,44 +1,53 @@
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS magisk-src
 
-# Install build dependencies
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    default-jdk-headless \
-    apktool \
-    apksigner \
-    python3 \
-    unzip \
-    zip \
-    wget \
+      ca-certificates \
+      curl \
+      git \
+      openjdk-21-jdk-headless \
+      python3 \
+      python3-pip \
+      unzip \
+      zip \
+      wget \
+      xz-utils \
+      build-essential \
+      file \
+      apksigner \
     && rm -rf /var/lib/apt/lists/*
 
-# Download Magisk with retry logic
-WORKDIR /magisk
-RUN curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest > release.json && \
-    MAGISK_VERSION=$(grep '"tag_name":' release.json | sed -E 's/.*"v([^"]+)".*/\1/') && \
-    echo "Downloading Magisk version: ${MAGISK_VERSION}" && \
-    wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v${MAGISK_VERSION}/Magisk-v${MAGISK_VERSION}.apk" || \
-    (echo "Fallback to direct latest download" && \
-     wget -O magisk.apk "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk")
+# Magisk build needs a non-interactive JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+# On arm64 builders the path differs; resolve at runtime in the build script path.
+RUN if [ ! -d "$JAVA_HOME" ]; then \
+      arch_java=$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")"); \
+      ln -sfn "$arch_java" /usr/lib/jvm/java-21-current; \
+    else \
+      ln -sfn "$JAVA_HOME" /usr/lib/jvm/java-21-current; \
+    fi
+ENV JAVA_HOME=/usr/lib/jvm/java-21-current
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
-RUN mkdir -p runtime && \
-    unzip -p magisk.apk assets/util_functions.sh > runtime/util_functions.sh && \
-    unzip -p magisk.apk assets/boot_patch.sh > runtime/boot_patch.sh && \
-    unzip -p magisk.apk assets/module_installer.sh > runtime/module_installer.sh && \
-    unzip -p magisk.apk assets/stub.apk > runtime/stub.apk && \
-    unzip -p magisk.apk lib/arm64-v8a/libbusybox.so > runtime/busybox && \
-    unzip -p magisk.apk lib/arm64-v8a/libmagisk.so > runtime/magisk && \
-    unzip -p magisk.apk lib/arm64-v8a/libmagiskboot.so > runtime/magiskboot && \
-    unzip -p magisk.apk lib/arm64-v8a/libmagiskinit.so > runtime/magiskinit && \
-    unzip -p magisk.apk lib/arm64-v8a/libmagiskpolicy.so > runtime/magiskpolicy && \
-    chmod 755 runtime/busybox runtime/magisk runtime/magiskboot runtime/magiskinit runtime/magiskpolicy runtime/module_installer.sh
+WORKDIR /build
+COPY scripts/build-magisk-from-source.sh /build/build-magisk-from-source.sh
+COPY scripts/repack-magisk-manager.sh /build/repack-magisk-manager.sh
+RUN chmod 755 /build/build-magisk-from-source.sh /build/repack-magisk-manager.sh
 
-COPY scripts/repack-magisk-manager.sh /magisk/repack-magisk-manager.sh
-RUN chmod 755 /magisk/repack-magisk-manager.sh && \
-    /magisk/repack-magisk-manager.sh /magisk/magisk.apk /magisk/magisk-manager.apk
+# Build Magisk from source for arm64 only (64-bit-only redroid image).
+# Default to the latest stable tag; override with --build-arg MAGISK_REF=...
+ARG MAGISK_REF=v30.7
+ENV MAGISK_REF=${MAGISK_REF}
+ENV MAGISK_ABI_LIST=arm64-v8a
+ENV MAGISK_PRIMARY_ABI=arm64-v8a
+ENV MAGISK_BUILD_TYPE=debug
+ENV MAGISK_OUT=/magisk
+ENV ANDROID_HOME=/opt/android-sdk
+
+RUN /build/build-magisk-from-source.sh && \
+    /build/repack-magisk-manager.sh /magisk/magisk.apk /magisk/magisk-manager.apk
 
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS tools
 
@@ -69,29 +78,56 @@ RUN mkdir -p android/arm64 && \
     chmod 755 android/arm64/* && \
     rm -rf /tmp/magisk-a64dbg-master
 
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS hooks
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      zip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /hooks
+COPY hooks/ /hooks/src/
+RUN mkdir -p /hooks/out && \
+    chmod 755 /hooks/src/redroid-hook.sh \
+              /hooks/src/redroid_hook/service.sh \
+              /hooks/src/redroid_hook/post-fs-data.sh && \
+    # Package as a non-Zygisk Magisk module zip (no zygisk/ directory).
+    (cd /hooks/src/redroid_hook && zip -qr /hooks/out/redroid_hook.zip . -x '*/zygisk/*') && \
+    cp /hooks/src/redroid-hook.sh /hooks/out/redroid-hook.sh && \
+    mkdir -p /hooks/out/configs && \
+    cp -a /hooks/src/configs/. /hooks/out/configs/
+
 # Main image - redroid base for Android 13 (64-bit only)
 FROM redroid/redroid:13.0.0_64only-latest
 
 # Keep the Magisk APK in /tmp so it can be installed as a user app at runtime.
-COPY --from=builder /magisk/magisk.apk /tmp/magisk.apk
-COPY --from=builder /magisk/magisk-manager.apk /tmp/magisk-manager.apk
-COPY --from=builder /magisk/runtime/ /system/etc/redroid/magisk/
-COPY --from=builder /magisk/runtime/magisk /system/bin/magisk
-COPY --from=builder /magisk/runtime/magisk /system/bin/su
-COPY --from=builder /magisk/runtime/magisk /system/xbin/su
+COPY --from=magisk-src /magisk/magisk.apk /tmp/magisk.apk
+COPY --from=magisk-src /magisk/magisk-manager.apk /tmp/magisk-manager.apk
+COPY --from=magisk-src /magisk/runtime/ /system/etc/redroid/magisk/
+COPY --from=magisk-src /magisk/magisk-source.env /system/etc/redroid/magisk-source.env
+COPY --from=magisk-src /magisk/runtime/magisk /system/bin/magisk
+COPY --from=magisk-src /magisk/runtime/magisk /system/bin/su
+COPY --from=magisk-src /magisk/runtime/magisk /system/xbin/su
 COPY magisk-boot/redroid-magisk-setup.sh /system/etc/redroid/redroid-magisk-setup.sh
 COPY magisk-boot/redroid-magisk.rc /system/etc/init/redroid-magisk.rc
 COPY --from=tools /tools/android/arm64/ /data/local/tmp/tools/arm64/
+COPY --from=hooks /hooks/out/redroid-hook.sh /system/etc/redroid/hook/redroid-hook.sh
+COPY --from=hooks /hooks/out/configs/ /system/etc/redroid/hook/configs/
+COPY --from=hooks /hooks/out/redroid_hook.zip /system/etc/redroid/hook/redroid_hook.zip
 
 # Set environment variables
-ENV MAGISK_VER=latest
+ENV MAGISK_VER=source
+ENV REDROID_HOOK=non-zygisk
 
 # Expose ADB port
 EXPOSE 5555
 
 # Labels
 LABEL org.opencontainers.image.title="Redroid 13 64-bit only with Magisk (ARM64)"
-LABEL org.opencontainers.image.description="Android 13 64-bit only with Magisk runtime staged and APK included at /tmp/magisk.apk"
+LABEL org.opencontainers.image.description="Android 13 64-bit only with Magisk built from source, non-Zygisk eBPF hook tooling staged"
 LABEL org.opencontainers.image.version="13.0.0"
 LABEL org.opencontainers.image.architecture="arm64"
 LABEL magisk.included="true"
+LABEL magisk.build="source"
+LABEL redroid.hook="non-zygisk-ebpf"

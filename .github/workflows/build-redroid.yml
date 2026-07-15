@@ -15,7 +15,6 @@ env:
 
 jobs:
   verify-image:
-    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -23,37 +22,59 @@ jobs:
           - arch: arm64
             platform: linux/arm64
             dockerfile: Dockerfile.arm64
+            runner: ubuntu-24.04-arm
           - arch: amd64
             platform: linux/amd64
             dockerfile: Dockerfile.amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64,amd64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build image for layout verification
         run: |
+          # Native runner per arch — no QEMU user-mode translation for arm64.
+          # Magisk is compiled from source inside the magisk-src stage (long).
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --load \
             -f ${{ matrix.dockerfile }} \
             -t redroid-verify:${{ matrix.arch }} \
+            --build-arg BUILDPLATFORM=${{ matrix.platform }} \
+            --cache-from type=gha,scope=redroid-${{ matrix.arch }} \
+            --cache-to type=gha,mode=max,scope=redroid-${{ matrix.arch }} \
             .
 
       - name: Verify image layout
         run: ./scripts/verify-image-layout.sh redroid-verify:${{ matrix.arch }} ${{ matrix.arch }}
 
   runtime-test:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            dockerfile: Dockerfile.amd64
+            runner: ubuntu-24.04
+            image_tag: redroid-runtime:amd64
+            container_name: redroid-runtime-amd64
+          - arch: arm64
+            platform: linux/arm64
+            dockerfile: Dockerfile.arm64
+            runner: ubuntu-24.04-arm
+            image_tag: redroid-runtime:arm64
+            container_name: redroid-runtime-arm64
+    runs-on: ${{ matrix.runner }}
     needs: verify-image
+    # Magisk-from-source rebuild (or cache restore) + redroid boot + UI e2e.
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
@@ -67,27 +88,24 @@ jobs:
       - name: Prepare host for redroid
         run: ./scripts/prepare-redroid-host.sh
 
-      - name: Build amd64 runtime image
+      - name: Build runtime image
         run: |
           docker buildx build \
-            --platform linux/amd64 \
+            --platform ${{ matrix.platform }} \
             --load \
-            -f Dockerfile.amd64 \
-            -t redroid-runtime:amd64 \
+            -f ${{ matrix.dockerfile }} \
+            -t ${{ matrix.image_tag }} \
+            --build-arg BUILDPLATFORM=${{ matrix.platform }} \
+            --cache-from type=gha,scope=redroid-${{ matrix.arch }} \
+            --cache-to type=gha,mode=max,scope=redroid-${{ matrix.arch }} \
             .
 
       - name: Run real e2e test
         env:
-          BOOT_TIMEOUT_SECONDS: 300
-        run: ./scripts/redroid-e2e.sh redroid-runtime:amd64 redroid-runtime-amd64
+          BOOT_TIMEOUT_SECONDS: 360
+        run: ./scripts/redroid-e2e.sh ${{ matrix.image_tag }} ${{ matrix.container_name }}
 
   publish:
-    runs-on: ubuntu-24.04
-    needs: [verify-image, runtime-test]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -95,18 +113,22 @@ jobs:
           - arch: arm64
             platform: linux/arm64
             dockerfile: Dockerfile.arm64
+            runner: ubuntu-24.04-arm
           - arch: amd64
             platform: linux/amd64
             dockerfile: Dockerfile.amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    needs: [verify-image, runtime-test]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64,amd64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -136,8 +158,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDPLATFORM=${{ matrix.platform }}
+          cache-from: type=gha,scope=redroid-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=redroid-${{ matrix.arch }}
 
   manifest:
     needs: publish

@@ -40,9 +40,15 @@ require_path /system/etc/redroid/magisk/magisk
 require_path /system/etc/redroid/magisk/magiskboot
 require_path /system/etc/redroid/magisk/magiskinit
 require_path /system/etc/redroid/magisk/magiskpolicy
+require_path /system/etc/redroid/magisk-source.env
+require_path /system/etc/redroid/hook/redroid-hook.sh
+require_path /system/etc/redroid/hook/redroid_hook.zip
+require_path /system/etc/redroid/hook/configs/example-stackplz.json
 require_path /data/local/tmp/tools/arm64/frida-server
 require_path /data/local/tmp/tools/arm64/ecapture
 require_path /data/local/tmp/tools/arm64/lldb-server
+require_path /data/local/tmp/tools/arm64/stackplz
+require_path /data/local/tmp/tools/arm64/eDBG
 
 if [[ $arch == arm64 ]]; then
   require_path /data/local/tmp/tools/arm64/eDBG

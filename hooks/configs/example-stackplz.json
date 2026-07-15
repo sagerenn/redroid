@@ -1,0 +1,31 @@
+{
+  "libs": [
+    {
+      "name": "libc.so",
+      "disable": false,
+      "configs": [
+        {
+          "symbol": "open",
+          "stack": true,
+          "regs": true
+        },
+        {
+          "symbol": "openat",
+          "stack": true,
+          "regs": true
+        }
+      ]
+    },
+    {
+      "name": "libnative-lib.so",
+      "disable": true,
+      "configs": [
+        {
+          "symbol": "_Z5func1v",
+          "stack": true,
+          "regs": true
+        }
+      ]
+    }
+  ]
+}

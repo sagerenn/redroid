@@ -1,0 +1,6 @@
+id=redroid_hook
+name=Redroid Runtime Hook (non-Zygisk)
+version=v1.0
+versionCode=1
+author=redroid
+description=Stages non-Zygisk eBPF/CLI hook helpers (stackplz/eDBG/ecapture) for runtime function/arg/value tracing. No Zygisk — avoids iJiami Zygisk detection.

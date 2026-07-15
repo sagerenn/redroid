@@ -211,5 +211,50 @@ echo "[redroid-magisk-setup] magisk stages invoked"
 
 prepare_magisk_manager_app
 
+# Non-Zygisk runtime hook helpers (eBPF tooling + Magisk module without zygisk/).
+prepare_runtime_hooks() {
+  local hook_src=/system/etc/redroid/hook
+  local mod_dir=/data/adb/modules/redroid_hook
+  local tools_root=/data/local/tmp/tools
+
+  mkdir -p /data/local/tmp/hooks/configs /data/local/tmp/hooks/logs "$tools_root" 2>/dev/null || true
+
+  if [ -f "$hook_src/redroid-hook.sh" ]; then
+    cp -af "$hook_src/redroid-hook.sh" /data/local/tmp/redroid-hook
+    chmod 755 /data/local/tmp/redroid-hook 2>/dev/null || true
+  fi
+
+  if [ -d "$hook_src/configs" ]; then
+    cp -af "$hook_src/configs"/. /data/local/tmp/hooks/configs/ 2>/dev/null || true
+  fi
+
+  for abi in arm64 x86_64; do
+    if [ -d "$tools_root/$abi" ]; then
+      chmod 755 "$tools_root/$abi"/* 2>/dev/null || true
+    fi
+  done
+
+  # Install a regular Magisk module (scripts only — no zygisk/ payload).
+  if [ -f "$hook_src/redroid_hook.zip" ] && [ ! -f "$mod_dir/module.prop" ]; then
+    mkdir -p "$mod_dir"
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -qo "$hook_src/redroid_hook.zip" -d "$mod_dir" 2>/dev/null || true
+    else
+      # busybox unzip fallback
+      /data/adb/magisk/busybox unzip -qo "$hook_src/redroid_hook.zip" -d "$mod_dir" 2>/dev/null || true
+    fi
+    chmod 755 "$mod_dir/service.sh" "$mod_dir/post-fs-data.sh" 2>/dev/null || true
+    # Ensure module is enabled (no disable flag)
+    rm -f "$mod_dir/disable" "$mod_dir/remove" 2>/dev/null || true
+    echo "[redroid-magisk-setup] installed non-Zygisk hook module at $mod_dir"
+  elif [ -f "$mod_dir/module.prop" ]; then
+    echo "[redroid-magisk-setup] hook module already present"
+  else
+    echo "[redroid-magisk-setup] hook module zip missing, skipped"
+  fi
+}
+
+prepare_runtime_hooks
+
 touch "$MARKER"
 echo "[redroid-magisk-setup] done"
