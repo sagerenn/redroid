@@ -57,9 +57,9 @@ jobs:
           sudo apt-get clean || true
           df -h
 
-      # Install apt deps BEFORE maximize: root-reserve leaves only a few GB and arm
-      # runners have hit ENOSPC on apt-get update with root-reserve-mb=2048 (~100MB free).
-      # Packages are tiny vs the LVM gain from pre-free + maximize.
+      # Install apt deps BEFORE maximize. After maximize, / is ~100% full regardless of
+      # root-reserve-mb (ext4 reserved blocks + fallocate eat the "reserve"; observed
+      # ~100MB free on both arm/amd runners). Never apt-get after maximize.
       - name: Install host build deps
         run: |
           set -eux
@@ -81,14 +81,13 @@ jobs:
           git config --global maintenance.auto false
           df -h /
 
-      # Mount a large LVM volume at /mnt/build (not GITHUB_WORKSPACE) so checkout/clean
-      # cannot wipe Docker data-root, and AOSP has ~120G+ headroom after pre-free.
-      # root-reserve-mb must cover: checkout, docker restart logs, buildx, residual apt.
+      # Large LVM at /mnt/build. root-reserve is best-effort only — do not put
+      # checkout, Docker data, AOSP, or tmp on / after this step.
       - name: Maximize build disk space
         uses: easimon/maximize-build-space@v10
         with:
           build-mount-path: /mnt/build
-          root-reserve-mb: 8192
+          root-reserve-mb: 2048
           temp-reserve-mb: 100
           swap-size-mb: 2048
           remove-dotnet: true
@@ -101,17 +100,20 @@ jobs:
         run: |
           set -eux
           df -h
-          # Sweep anything still on root (does not enlarge LVM, only frees root for tooling).
+          # Sweep leftover toolchains on root (does not enlarge LVM).
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache /usr/local/share/powershell \
             /var/lib/apt/lists/* /var/cache/apt/archives/* || true
           sudo apt-get clean || true
+          # Host temp + agent caches off root so residual ~100MB free is enough.
+          mkdir -p /mnt/build/tmp /mnt/build/home /mnt/build/src /mnt/build/artifacts
+          # Prefer build volume for anything that would otherwise land on /.
+          echo "TMPDIR=/mnt/build/tmp" >> "$GITHUB_ENV"
+          echo "TMP=/mnt/build/tmp" >> "$GITHUB_ENV"
+          echo "TEMP=/mnt/build/tmp" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=/mnt/build/home/.cache" >> "$GITHUB_ENV"
           root_avail_kb=$(df -Pk / | awk 'NR==2 {print $4}')
-          echo "root_avail_kb=${root_avail_kb}"
-          if [ "${root_avail_kb}" -lt $((512 * 1024)) ]; then
-            echo "::error::Root only has ${root_avail_kb} KB free after maximize; need >= 512 MiB"
-            exit 1
-          fi
+          echo "root_avail_kb=${root_avail_kb} (expected low ~100MB after maximize; heavy I/O is on /mnt/build)"
           avail_kb=$(df -Pk /mnt/build | awk 'NR==2 {print $4}')
           echo "build_volume_avail_kb=${avail_kb}"
           if [ "${avail_kb}" -lt $((110 * 1024 * 1024)) ]; then
@@ -137,13 +139,18 @@ jobs:
           docker info | grep -E 'Docker Root Dir|Storage Driver'
           df -h /mnt/build /
 
+      # Absolute path: checkout resolves under $GITHUB_WORKSPACE, but path.resolve
+      # keeps an absolute path so the repo lands on the LVM, not full root.
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          path: /mnt/build/src
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build redroid base from AOSP source
+        working-directory: /mnt/build/src
         env:
           REDROID_AOSP_TAG: ${{ env.REDROID_AOSP_TAG }}
           REDROID_LOCAL_MANIFEST_BRANCH: ${{ env.REDROID_LOCAL_MANIFEST_BRANCH }}
@@ -164,6 +171,7 @@ jobs:
           docker system df || true
 
       - name: Export base image artifact
+        working-directory: /mnt/build/src
         run: |
           set -euo pipefail
           docker image inspect "${{ matrix.base_tag }}" --format '{{.Id}} {{.Architecture}} {{.Size}}'
