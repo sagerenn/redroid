@@ -207,7 +207,7 @@ run_aosp_build() {
     -e TMP=/src/.tmp \
     -e TEMP=/src/.tmp \
     "$BUILDER_IMAGE" \
-    "set -euo pipefail
+    "set -eo pipefail
      mkdir -p /src/.tmp
      cd /src
      # Prefer prebuilt JDK from the tree when present
@@ -216,8 +216,12 @@ run_aosp_build() {
      elif [ -d prebuilts/jdk/jdk11 ]; then
        export PATH=\"/src/prebuilts/jdk/jdk11/linux-x86/bin:\$PATH\"
      fi
+     # envsetup/lunch reference optional unbound vars (TOP, ZSH_VERSION, …);
+     # nounset (-u) breaks AOSP bash setup on set -u shells.
+     set +u
      . build/envsetup.sh
      lunch ${REDROID_LUNCH}
+     set -u
      # shellcheck disable=SC2086
      m -j${REDROID_JOBS} ${targets}
     "
