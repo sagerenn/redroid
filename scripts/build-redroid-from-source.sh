@@ -231,7 +231,9 @@ prune_cts_dependent_tests() {
   fi
 
   # Final pass: any leftover Android.bp that still names CTS/MTS-only modules
-  # (e.g. tools/platform-compat/.../testing/app, SafetyCenter Config tests).
+  # (e.g. tools/platform-compat/.../testing/app, SafetyCenter Config tests,
+  # external/* test leaves). Scan the whole tree except .repo/out/.tmp so a
+  # missed search root cannot hide a cts_defaults consumer.
   # Safe for redroid packaging: these symbols only come from platform/cts.
   while IFS= read -r -d '' bp; do
     if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
@@ -240,7 +242,7 @@ prune_cts_dependent_tests() {
       rm -rf "$dir"
       n=$((n + 1))
     fi
-  done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
+  done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
 
   echo "[redroid-src] pruned ${n} CTS/MTS-dependent test path(s)"
 }

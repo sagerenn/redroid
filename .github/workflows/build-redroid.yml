@@ -20,8 +20,13 @@ env:
 
 jobs:
   aosp-base:
+    # Serial matrix: concurrent jobs often land one arch on a ~72G root host
+    # (→ ~50G LVM) while the other gets ~145G. AOSP partial-clone + system/vendor
+    # needs >= ~90 GiB; only the larger hosts succeed. One-at-a-time prefers
+    # large-disk runners and avoids two full AOSP trees racing GH capacity.
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - product_arch: arm64
@@ -42,6 +47,9 @@ jobs:
         run: |
           set -eux
           df -h
+          lsblk || true
+          # Aggressive reclaim: GH ubuntu-24.04 hosts vary (~72G vs ~145G root).
+          # Everything deleted here becomes LVM capacity after maximize.
           sudo rm -rf \
             /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
             /usr/local/share/boost /usr/share/swift /usr/local/.ghcup \
@@ -52,10 +60,29 @@ jobs:
             /usr/local/share/edge_driver /usr/local/share/gecko_driver \
             /usr/local/share/chrome_driver /usr/local/share/vcpkg \
             /opt/microsoft /usr/share/sbt /usr/local/aws-cli /usr/local/aws-sam-cli \
-            /usr/share/apache-maven* /usr/share/rvm /home/linuxbrew || true
-          docker system prune -af || true
+            /usr/share/apache-maven* /usr/share/rvm /home/linuxbrew \
+            /usr/local/share/chromium /usr/share/google-cloud-sdk \
+            /opt/google /usr/share/php /usr/share/dotnet \
+            /var/lib/docker /var/lib/containerd /var/lib/snapd \
+            /snap /var/cache/snapd /usr/lib/snapd \
+            /usr/share/doc /usr/share/man /usr/share/locale \
+            /var/cache/apt/archives /var/lib/apt/lists \
+            /usr/local/lib/node_modules /usr/local/n /usr/local/go || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean || true
+          # Drop large optional packages if present (best-effort; ignore failures).
+          sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+            'temurin-*-jdk' 'adoptopenjdk-*' 'openjdk-*' \
+            firefox google-chrome-stable microsoft-edge-stable \
+            mono-complete php.* || true
+          sudo apt-get autoremove -y || true
           sudo apt-get clean || true
           df -h
+          root_total_kb=$(df -Pk / | awk 'NR==2 {print $2}')
+          echo "root_total_kb=${root_total_kb}"
+          if [ "${root_total_kb}" -lt $((100 * 1024 * 1024)) ]; then
+            echo "::warning::Root disk only ${root_total_kb} KB (~$((root_total_kb/1024/1024)) GiB); LVM may be <90 GiB. Prefer large-disk hosts (max-parallel:1)."
+          fi
 
       # Install apt deps BEFORE maximize. After maximize, / is ~100% full regardless of
       # root-reserve-mb (ext4 reserved blocks + fallocate eat the "reserve"; observed
@@ -87,7 +114,9 @@ jobs:
         uses: easimon/maximize-build-space@v10
         with:
           build-mount-path: /mnt/build
-          root-reserve-mb: 2048
+          # Keep reserve small so more free space lands in the build LV. Host tools
+          # and AOSP never write to / after this step.
+          root-reserve-mb: 1024
           temp-reserve-mb: 100
           swap-size-mb: 2048
           remove-dotnet: true
@@ -100,6 +129,7 @@ jobs:
         run: |
           set -eux
           df -h
+          lsblk || true
           # Sweep leftover toolchains on root (does not enlarge LVM).
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache /usr/local/share/powershell \
@@ -111,15 +141,16 @@ jobs:
           echo "TMP=/mnt/build/tmp" >> "$GITHUB_ENV"
           echo "TEMP=/mnt/build/tmp" >> "$GITHUB_ENV"
           echo "XDG_CACHE_HOME=/mnt/build/home/.cache" >> "$GITHUB_ENV"
+          root_total_kb=$(df -Pk / | awk 'NR==2 {print $2}')
           root_avail_kb=$(df -Pk / | awk 'NR==2 {print $4}')
-          echo "root_avail_kb=${root_avail_kb} (expected low ~100MB after maximize; heavy I/O is on /mnt/build)"
+          echo "root_total_kb=${root_total_kb} root_avail_kb=${root_avail_kb} (expected low free after maximize; heavy I/O is on /mnt/build)"
           avail_kb=$(df -Pk /mnt/build | awk 'NR==2 {print $4}')
-          echo "build_volume_avail_kb=${avail_kb}"
+          echo "build_volume_avail_kb=${avail_kb} (~$((avail_kb/1024/1024)) GiB)"
           if [ "${avail_kb}" -lt $((110 * 1024 * 1024)) ]; then
             echo "::warning::Build volume has ${avail_kb} KB free (<110 GiB ideal); continuing if >= 90 GiB"
           fi
           if [ "${avail_kb}" -lt $((90 * 1024 * 1024)) ]; then
-            echo "::error::Build volume only has ${avail_kb} KB free; need >= 90 GiB for AOSP"
+            echo "::error::Build volume only has ${avail_kb} KB free (~$((avail_kb/1024/1024)) GiB); need >= 90 GiB for AOSP partial-clone + system/vendor. Root was ${root_total_kb} KB — re-run to land on a larger host (GH ubuntu-24.04 varies ~72G vs ~145G)."
             exit 1
           fi
 
