@@ -198,8 +198,9 @@ prune_cts_dependent_tests() {
   # Match any soong default/module that lives only in platform/cts.
   local cts_syms='cts_defaults|mts-target-sdk-version-current'
   echo "[redroid-src] pruning CTS/MTS-default test leaves (platform/cts removed)"
-  # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; include it.
-  for d in packages frameworks platform_testing tools device; do
+  # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
+  # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.
+  for d in packages frameworks platform_testing tools device system hardware; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
   if [[ ${#search[@]} -eq 0 ]]; then
