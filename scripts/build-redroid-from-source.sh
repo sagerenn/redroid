@@ -186,15 +186,18 @@ sync_tree() {
   rm -rf "$patches_dir"
 }
 
-# Remove soong leaves that default to cts_defaults after platform/cts is gone.
+# Remove soong leaves that default to CTS/MTS modules after platform/cts is gone.
 # Defined before sync_tree calls it; bash only needs the def before the call runs.
-# cts_defaults is only defined in platform/cts; any Android.bp that still
-# references it is unused for systemimage/vendorimage and will fail soong.
+# cts_defaults and mts-target-sdk-version-current are only defined in platform/cts;
+# any Android.bp that still references them is unused for systemimage/vendorimage
+# and will fail soong.
 prune_cts_dependent_tests() {
   local root=${1:-$REDROID_SRC}
   local bp dir n=0
   local search=()
-  echo "[redroid-src] pruning CTS-default test leaves (platform/cts removed)"
+  # Match any soong default/module that lives only in platform/cts.
+  local cts_syms='cts_defaults|mts-target-sdk-version-current'
+  echo "[redroid-src] pruning CTS/MTS-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; include it.
   for d in packages frameworks platform_testing tools device; do
     [[ -d $root/$d ]] && search+=("$root/$d")
@@ -204,12 +207,12 @@ prune_cts_dependent_tests() {
     return 0
   fi
   while IFS= read -r -d '' bp; do
-    if grep -Fq 'cts_defaults' "$bp" 2>/dev/null; then
+    if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
       # Drop test-like paths first; second pass removes any remaining refs.
       case "$dir" in
         */tests/*|*/tests|*/mts|*/mts/*|*/cts|*/cts/*|*/testing/*|*/testing|*/test/*|*/test)
-          echo "[redroid-src]   drop $dir (cts_defaults)"
+          echo "[redroid-src]   drop $dir (cts/mts defaults)"
           rm -rf "$dir"
           n=$((n + 1))
           ;;
@@ -226,32 +229,37 @@ prune_cts_dependent_tests() {
     done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
   fi
 
-  # Final pass: any leftover Android.bp that still names cts_defaults (e.g.
-  # tools/platform-compat/.../testing/app) — remove the leaf directory.
-  # Safe for redroid packaging: cts_defaults only comes from platform/cts.
+  # Final pass: any leftover Android.bp that still names CTS/MTS-only modules
+  # (e.g. tools/platform-compat/.../testing/app, SafetyCenter Config tests).
+  # Safe for redroid packaging: these symbols only come from platform/cts.
   while IFS= read -r -d '' bp; do
-    if grep -Fq 'cts_defaults' "$bp" 2>/dev/null; then
+    if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
-      echo "[redroid-src]   drop $dir (cts_defaults leftover)"
+      echo "[redroid-src]   drop $dir (cts/mts leftover)"
       rm -rf "$dir"
       n=$((n + 1))
     fi
   done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
 
-  echo "[redroid-src] pruned ${n} CTS-dependent test path(s)"
+  echo "[redroid-src] pruned ${n} CTS/MTS-dependent test path(s)"
 }
 
 # Drop trees that depend on modules from removed Car / cuttlefish projects.
 # aosp-remove-unused.xml removes the parent projects; this cleans nested leftovers.
+# hardware/interfaces is a single repo project so automotive/* must be pruned
+# post-sync (cannot remove-project a subdir).
 prune_removed_product_orphans() {
   local root=${1:-$REDROID_SRC}
   local path n=0
-  echo "[redroid-src] pruning Car/cuttlefish-dependent leftover paths"
+  echo "[redroid-src] pruning Car/cuttlefish/automotive leftover paths"
   local paths=(
     tools/security
     device/generic/opengl-transport
     device/google/cuttlefish
     device/google/cuttlefish_prebuilts
+    # packages/services/Car defines android-automotive-large-parcelable-*;
+    # vehicle HAL aidl/impl defaults to it. redroid is not automotive.
+    hardware/interfaces/automotive
   )
   for path in "${paths[@]}"; do
     if [[ -e $root/$path ]]; then
@@ -261,20 +269,29 @@ prune_removed_product_orphans() {
     fi
   done
 
-  # Any remaining Android.bp that still defaults to carwatchdog* / cuttlefish_buildhost_only
-  # under tools/ or device/ — drop their directories (test/fuzzer leaves only).
+  # Any remaining Android.bp that still defaults to carwatchdog* /
+  # cuttlefish_buildhost_only / android-automotive-large-parcelable* —
+  # drop those leaves under tools/, device/, or hardware/.
   local bp dir
   local search=()
-  for d in tools device; do
+  for d in tools device hardware; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
+  local car_syms='carwatchdogd_defaults|libwatchdog_perf_service_defaults|cuttlefish_buildhost_only|android-automotive-large-parcelable'
   if [[ ${#search[@]} -gt 0 ]]; then
     while IFS= read -r -d '' bp; do
-      if grep -Eq 'carwatchdogd_defaults|libwatchdog_perf_service_defaults|cuttlefish_buildhost_only' "$bp" 2>/dev/null; then
+      if grep -Eq "$car_syms" "$bp" 2>/dev/null; then
         dir=$(dirname "$bp")
         case "$dir" in
-          */fuzz*|*/fuzzer*|*/fuzzers*|*/tests/*|*/tests|*/host/*|*/cuttlefish*|*/opengl-transport*)
-            echo "[redroid-src]   drop $dir (car/cuttlefish soong dep)"
+          */fuzz*|*/fuzzer*|*/fuzzers*|*/tests/*|*/tests|*/host/*|*/cuttlefish*|*/opengl-transport*|*/automotive*)
+            echo "[redroid-src]   drop $dir (car/cuttlefish/automotive soong dep)"
+            rm -rf "$dir"
+            n=$((n + 1))
+            ;;
+          *)
+            # Non-test path still naming a removed-product module: drop the leaf.
+            # Safe after packages/services/Car + cuttlefish are gone.
+            echo "[redroid-src]   drop $dir (car/automotive leftover)"
             rm -rf "$dir"
             n=$((n + 1))
             ;;
@@ -283,7 +300,7 @@ prune_removed_product_orphans() {
     done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
   fi
 
-  echo "[redroid-src] pruned ${n} Car/cuttlefish orphan path(s)"
+  echo "[redroid-src] pruned ${n} Car/cuttlefish/automotive orphan path(s)"
 }
 
 build_builder_image() {

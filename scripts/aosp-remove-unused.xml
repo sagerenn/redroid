@@ -121,7 +121,12 @@
        default to carwatchdogd_defaults from packages/services/Car, which we remove. -->
   <remove-project name="platform/tools/security" />
 
-  <!-- Automotive / Car packages -->
+  <!-- Automotive / Car packages.
+       Note: hardware/interfaces/automotive/* lives inside the single
+       platform/hardware/interfaces project and cannot be remove-project'd;
+       build-redroid-from-source.sh prune_removed_product_orphans drops it
+       post-sync (VehicleHalDefaults → android-automotive-large-parcelable-defaults
+       from packages/services/Car/cpp/car_binder_lib). -->
   <remove-project name="platform/packages/apps/Car/Calendar" />
   <remove-project name="platform/packages/apps/Car/Cluster" />
   <remove-project name="platform/packages/apps/Car/DebuggingRestrictionController" />
