@@ -257,9 +257,11 @@ prune_removed_product_orphans() {
     device/generic/opengl-transport
     device/google/cuttlefish
     device/google/cuttlefish_prebuilts
-    # packages/services/Car defines android-automotive-large-parcelable-*;
-    # vehicle HAL aidl/impl defaults to it. redroid is not automotive.
+    device/google_car
+    # packages/services/Car defines android-automotive-large-parcelable-* and
+    # android.car*; vehicle HAL + frameworks/opt/car default to them.
     hardware/interfaces/automotive
+    frameworks/opt/car
   )
   for path in "${paths[@]}"; do
     if [[ -e $root/$path ]]; then
@@ -277,13 +279,14 @@ prune_removed_product_orphans() {
   for d in tools device hardware; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
-  local car_syms='carwatchdogd_defaults|libwatchdog_perf_service_defaults|cuttlefish_buildhost_only|android-automotive-large-parcelable'
+  # Symbols only defined under packages/services/Car or cuttlefish trees we remove.
+  local car_syms='carwatchdogd_defaults|libwatchdog_perf_service_defaults|cuttlefish_buildhost_only|android-automotive-large-parcelable|android\.car\.watchdoglib|car-frameworks-service'
   if [[ ${#search[@]} -gt 0 ]]; then
     while IFS= read -r -d '' bp; do
       if grep -Eq "$car_syms" "$bp" 2>/dev/null; then
         dir=$(dirname "$bp")
         case "$dir" in
-          */fuzz*|*/fuzzer*|*/fuzzers*|*/tests/*|*/tests|*/host/*|*/cuttlefish*|*/opengl-transport*|*/automotive*)
+          */fuzz*|*/fuzzer*|*/fuzzers*|*/tests/*|*/tests|*/host/*|*/cuttlefish*|*/opengl-transport*|*/automotive*|*/opt/car*|*/google_car*)
             echo "[redroid-src]   drop $dir (car/cuttlefish/automotive soong dep)"
             rm -rf "$dir"
             n=$((n + 1))

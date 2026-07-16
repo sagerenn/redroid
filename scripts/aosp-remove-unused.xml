@@ -148,6 +148,10 @@
   <remove-project name="platform/packages/apps/Car/SystemUpdater" />
   <remove-project name="platform/packages/apps/Car/systemlibs" />
   <remove-project name="platform/packages/services/Car" />
+  <!-- Framework/device car leaves that default to android.car* from packages/services/Car. -->
+  <remove-project name="platform/frameworks/opt/car/services" />
+  <remove-project name="platform/frameworks/opt/car/setupwizard" />
+  <remove-project name="device/google_car" />
 
   <!-- Developer samples / large tooling not used by redroid packaging -->
   <remove-project name="platform/developers/build" />
