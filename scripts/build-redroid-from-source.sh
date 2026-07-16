@@ -258,6 +258,9 @@ prune_cts_dependent_tests() {
   # roots. Unrestricted rm -rf here previously deleted external/skia (some nested
   # or top-level Android.bp grepped as cts_*), which then broke librenderengine_test
   # with undefined module "skia_deps".
+  # For production trees that embed CTS modules in the same Android.bp (e.g.
+  # external/skia → android_test CtsSkQPTestCases defaults: ["cts_defaults"]),
+  # surgically strip those modules instead of deleting the project.
   while IFS= read -r -d '' bp; do
     if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
@@ -266,14 +269,140 @@ prune_cts_dependent_tests() {
         rm -rf "$dir"
         n=$((n + 1))
       else
-        # Keep production trees; log so the next soong undefined-module is diagnosable.
-        echo "[redroid-src]   keep $dir (cts symbol in non-test path; not deleting production tree)"
-        skipped=$((skipped + 1))
+        if _strip_cts_modules_from_bp "$bp" "$cts_syms"; then
+          n=$((n + 1))
+        else
+          # Still references cts symbols (parse miss) — log for diagnosis; do not
+          # delete production trees.
+          echo "[redroid-src]   keep $dir (cts symbol in non-test path; not deleting production tree)"
+          skipped=$((skipped + 1))
+        fi
       fi
     fi
   done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
 
   echo "[redroid-src] pruned ${n} CTS/MTS-dependent test path(s) (kept ${skipped} non-test path(s) with cts symbols)"
+}
+
+# Strip top-level Soong modules whose body references platform/cts-only symbols
+# (cts_defaults, etc.) from a production Android.bp, without removing the tree.
+# Returns 0 if at least one module was removed and no cts_syms remain; 1 otherwise.
+_strip_cts_modules_from_bp() {
+  local bp=$1
+  local cts_syms=$2
+  local out rc=0 removed_n names still
+  # Python brace-balanced stripper: remove any top-level module { ... } that
+  # greps as cts_syms. Leaves production modules (libskia, skia_deps, …) intact.
+  # `|| rc=$?` preserves exit codes under set -e (2=no match, 3=no module, 4=still).
+  out=$(CTS_SYMS="$cts_syms" python3 - "$bp" <<'PY'
+import os, re, sys
+path = sys.argv[1]
+cts_syms = os.environ["CTS_SYMS"]
+# Convert egrep alternation to a Python re that matches whole identifiers.
+# Input examples: cts_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current
+pat = re.compile(r"\b(?:" + cts_syms + r")\b")
+src = open(path, "r", encoding="utf-8", errors="replace").read()
+if not pat.search(src):
+    sys.exit(2)
+n = len(src)
+i = 0
+out = []
+removed = 0
+removed_names = []
+
+def at_module_start(s, pos):
+    # Top-level soong module: identifier {  (preceded by start/newline-ish)
+    m = re.match(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\{", s[pos:])
+    if not m:
+        return None
+    if pos > 0 and s[pos - 1] not in "\n\r\t ":
+        # still allow start of file
+        if pos != 0:
+            return None
+    return m
+
+while i < n:
+    m = at_module_start(src, i)
+    if m:
+        start = i
+        j = i + m.end() - 1  # index of '{'
+        depth = 0
+        k = j
+        while k < n:
+            c = src[k]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    k += 1
+                    break
+            elif c == '"':
+                k += 1
+                while k < n:
+                    if src[k] == "\\":
+                        k += 2
+                        continue
+                    if src[k] == '"':
+                        k += 1
+                        break
+                    k += 1
+                continue
+            elif c == "/" and k + 1 < n and src[k + 1] == "/":
+                k += 2
+                while k < n and src[k] not in "\n\r":
+                    k += 1
+                continue
+            elif c == "/" and k + 1 < n and src[k + 1] == "*":
+                k += 2
+                while k + 1 < n and not (src[k] == "*" and src[k + 1] == "/"):
+                    k += 1
+                k = min(k + 2, n)
+                continue
+            k += 1
+        block = src[start:k]
+        if pat.search(block):
+            removed += 1
+            # Best-effort module name for logs.
+            nm = re.search(r'\bname:\s*"([^"]+)"', block)
+            removed_names.append(nm.group(1) if nm else m.group(1))
+            while k < n and src[k] in "\r\n":
+                k += 1
+            i = k
+            continue
+        out.append(block)
+        i = k
+        continue
+    out.append(src[i])
+    i += 1
+
+new = "".join(out)
+if removed == 0:
+    sys.exit(3)
+open(path, "w", encoding="utf-8").write(new)
+still = bool(pat.search(new))
+print(f"{removed}\t{','.join(removed_names)}\t{int(still)}")
+sys.exit(0 if not still else 4)
+PY
+  ) || rc=$?
+  if [[ $rc -eq 2 ]]; then
+    # No cts symbols (race or already clean).
+    return 1
+  fi
+  if [[ $rc -ne 0 ]]; then
+    echo "[redroid-src]   strip-failed $bp (rc=$rc); leaving tree intact" >&2
+    return 1
+  fi
+  # out: removed_count \t names \t still_has_cts
+  removed_n=$(printf '%s' "$out" | cut -f1)
+  names=$(printf '%s' "$out" | cut -f2)
+  still=$(printf '%s' "$out" | cut -f3)
+  echo "[redroid-src]   strip $bp (removed ${removed_n} module(s): ${names})"
+  if [[ $still == 1 ]]; then
+    echo "[redroid-src]   WARNING: $bp still references cts symbols after strip" >&2
+    return 1
+  fi
+  return 0
 }
 
 # Drop trees that depend on modules from removed Car / cuttlefish projects.
