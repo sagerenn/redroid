@@ -191,15 +191,35 @@ sync_tree() {
 # cts_defaults and mts-target-sdk-version-current are only defined in platform/cts;
 # any Android.bp that still references them is unused for systemimage/vendorimage
 # and will fail soong.
+# True if $1 looks like a test/CTS/MTS leaf (never a production project root).
+# Used so leftover prune cannot rm -rf external/skia, frameworks/* libs, etc.
+# when a nested Android.bp (or a false-positive grep) mentions a CTS symbol.
+_is_test_like_path() {
+  case "$1" in
+    */tests/*|*/tests|*/mts|*/mts/*|*/cts|*/cts/*|*/testing/*|*/testing|*/test/*|*/test|\
+    */javatests/*|*/javatests|*/unitests/*|*/unitests|*/uitests/*|*/uitests|\
+    */hostsidetests/*|*/hostsidetests|*/tests_*/*|*/*_tests/*|*/*_tests|\
+    */*_test/*|*/*_test)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 prune_cts_dependent_tests() {
   local root=${1:-$REDROID_SRC}
-  local bp dir n=0
+  local bp dir n=0 skipped=0
   local search=()
-  # Match any soong default/module that lives only in platform/cts.
-  local cts_syms='cts_defaults|mts-target-sdk-version-current'
+  # Soong defaults/modules that live only in platform/cts (removed via
+  # aosp-remove-unused.xml). Expand when a new "undefined module" appears from
+  # a test leaf that still references platform/cts.
+  local cts_syms='cts_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current'
   echo "[redroid-src] pruning CTS/MTS-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
   # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.
+  # platform_testing/ holds compatibility-common-util-tests → cts_error_prone_rules.
   for d in packages frameworks platform_testing tools device system hardware; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
@@ -210,14 +230,11 @@ prune_cts_dependent_tests() {
   while IFS= read -r -d '' bp; do
     if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
-      # Drop test-like paths first; second pass removes any remaining refs.
-      case "$dir" in
-        */tests/*|*/tests|*/mts|*/mts/*|*/cts|*/cts/*|*/testing/*|*/testing|*/test/*|*/test)
-          echo "[redroid-src]   drop $dir (cts/mts defaults)"
-          rm -rf "$dir"
-          n=$((n + 1))
-          ;;
-      esac
+      if _is_test_like_path "$dir"; then
+        echo "[redroid-src]   drop $dir (cts/mts defaults)"
+        rm -rf "$dir"
+        n=$((n + 1))
+      fi
     fi
   done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
 
@@ -230,21 +247,27 @@ prune_cts_dependent_tests() {
     done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
   fi
 
-  # Final pass: any leftover Android.bp that still names CTS/MTS-only modules
-  # (e.g. tools/platform-compat/.../testing/app, SafetyCenter Config tests,
-  # external/* test leaves). Scan the whole tree except .repo/out/.tmp so a
-  # missed search root cannot hide a cts_defaults consumer.
-  # Safe for redroid packaging: these symbols only come from platform/cts.
+  # Final pass: whole tree except .repo/out/.tmp so a missed search root cannot
+  # hide a cts_* consumer. ONLY drop test-like leaves — never production project
+  # roots. Unrestricted rm -rf here previously deleted external/skia (some nested
+  # or top-level Android.bp grepped as cts_*), which then broke librenderengine_test
+  # with undefined module "skia_deps".
   while IFS= read -r -d '' bp; do
     if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
-      echo "[redroid-src]   drop $dir (cts/mts leftover)"
-      rm -rf "$dir"
-      n=$((n + 1))
+      if _is_test_like_path "$dir"; then
+        echo "[redroid-src]   drop $dir (cts/mts leftover)"
+        rm -rf "$dir"
+        n=$((n + 1))
+      else
+        # Keep production trees; log so the next soong undefined-module is diagnosable.
+        echo "[redroid-src]   keep $dir (cts symbol in non-test path; not deleting production tree)"
+        skipped=$((skipped + 1))
+      fi
     fi
   done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
 
-  echo "[redroid-src] pruned ${n} CTS/MTS-dependent test path(s)"
+  echo "[redroid-src] pruned ${n} CTS/MTS-dependent test path(s) (kept ${skipped} non-test path(s) with cts symbols)"
 }
 
 # Drop trees that depend on modules from removed Car / cuttlefish projects.
