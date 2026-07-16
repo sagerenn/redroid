@@ -188,7 +188,7 @@ sync_tree() {
 
 # Remove soong leaves that default to CTS/MTS modules after platform/cts is gone.
 # Defined before sync_tree calls it; bash only needs the def before the call runs.
-# cts_defaults and mts-target-sdk-version-current are only defined in platform/cts;
+# cts_*_defaults / mts-target-sdk-version-current live only in platform/cts;
 # any Android.bp that still references them is unused for systemimage/vendorimage
 # and will fail soong.
 # True if $1 looks like a test/CTS/MTS leaf (never a production project root).
@@ -221,7 +221,9 @@ prune_cts_dependent_tests() {
   # Soong defaults/modules that live only in platform/cts (removed via
   # aosp-remove-unused.xml). Expand when a new "undefined module" appears from
   # a test leaf that still references platform/cts.
-  local cts_syms='cts_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current'
+  # cts(_…)?_defaults covers cts_defaults, cts_support_defaults, and any
+  # future cts_*_defaults (PackageManagerServiceTests → cts_support_defaults).
+  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current'
   echo "[redroid-src] pruning CTS/MTS-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
   # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.

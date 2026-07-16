@@ -98,11 +98,12 @@
   <remove-project name="device/generic/car" />
 
   <!-- CTS / VTS / MLTS (not needed for systemimage/vendorimage).
-       platform/cts provides soong module cts_defaults. Test leaves under
-       packages/modules, frameworks, tools/platform-compat (e.g. MtsWifiTestCases,
-       SharedLibraryInfoTestApp) still default to it; those are not separate repo
-       projects — build-redroid-from-source.sh prunes any Android.bp that still
-       references cts_defaults post-sync. -->
+       platform/cts provides soong modules cts_defaults / cts_support_defaults
+       etc. Test leaves under packages/modules, frameworks, tools/platform-compat
+       (e.g. MtsWifiTestCases, PackageManagerTestOverlayTarget) still default to
+       them; those are not separate repo projects —
+       build-redroid-from-source.sh prunes any Android.bp that still references
+       cts_*_defaults post-sync. -->
   <remove-project name="platform/cts" />
   <remove-project name="platform/test/cts-root" />
   <remove-project name="platform/test/vts" />
