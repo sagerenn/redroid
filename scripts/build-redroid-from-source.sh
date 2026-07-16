@@ -195,11 +195,17 @@ sync_tree() {
 # Used so leftover prune cannot rm -rf external/skia, frameworks/* libs, etc.
 # when a nested Android.bp (or a false-positive grep) mentions a CTS symbol.
 _is_test_like_path() {
+  # Match test/CTS/MTS leaves only — never production project roots (e.g. external/skia).
+  # Includes tests_mts (libnativehelper/tests_mts → MtsLibnativehelperTestCases),
+  # *_mts dirs, tests_* prefixes, and classic tests/cts/mts/testing leaves.
   case "$1" in
-    */tests/*|*/tests|*/mts|*/mts/*|*/cts|*/cts/*|*/testing/*|*/testing|*/test/*|*/test|\
+    */tests/*|*/tests|*/tests_*/*|*/tests_*|\
+    */mts|*/mts/*|*/*_mts|*/*_mts/*|*/mts_*/*|*/mts_*|\
+    */cts|*/cts/*|*/testing/*|*/testing|*/test/*|*/test|\
     */javatests/*|*/javatests|*/unitests/*|*/unitests|*/uitests/*|*/uitests|\
     */hostsidetests/*|*/hostsidetests|*/tests_*/*|*/*_tests/*|*/*_tests|\
-    */*_test/*|*/*_test)
+    */*_test/*|*/*_test|*/*TestCases|*/*TestCases/*|\
+    */sts-common-util/*|*/sts-common-util)
       return 0
       ;;
     *)
