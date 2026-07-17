@@ -224,9 +224,11 @@ prune_cts_dependent_tests() {
   # "undefined module" appears from a test leaf.
   # cts(_…)?_defaults covers cts_defaults, cts_support_defaults, and any
   # future cts_*_defaults (PackageManagerServiceTests → cts_support_defaults).
-  # tradefed / cts-tradefed / compatibility-* / cts-install-lib* are host-side
-  # CTS/TF harness modules (fs_mgr tests, FastDeployHostTests, SdkSandbox*, …).
-  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|tradefed|cts-tradefed|compatibility-tradefed|compatibility-host-util|cts-install-lib(-host)?'
+  # Host-side TF harness modules must be matched as quoted Soong names
+  # ("tradefed", "cts-tradefed", …). Bare \btradefed\b also matches inside
+  # soong-tradefed and tradefed.go, which previously stripped build/soong
+  # bootstrap packages (soong-cc/java/python/sh) and broke soong-apex.
+  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"cts-tradefed"|"compatibility-tradefed"|"compatibility-host-util"|"cts-install-lib(-host)?"'
   echo "[redroid-src] pruning CTS/MTS/tradefed-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
   # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.
@@ -258,17 +260,25 @@ prune_cts_dependent_tests() {
     done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
   fi
 
-  # Final pass: whole tree except .repo/out/.tmp so a missed search root cannot
-  # hide a cts_* consumer. ONLY drop test-like leaves — never production project
-  # roots. Unrestricted rm -rf here previously deleted external/skia (some nested
-  # or top-level Android.bp grepped as cts_*), which then broke librenderengine_test
-  # with undefined module "skia_deps".
+  # Final pass: whole tree except .repo/out/.tmp/build/soong so a missed search
+  # root cannot hide a cts_* consumer. NEVER strip/rm under build/soong — those
+  # are soong bootstrap plugins (soong-cc, soong-java, soong-tradefed, …).
+  # ONLY drop test-like leaves — never production project roots. Unrestricted
+  # rm -rf here previously deleted external/skia (some nested or top-level
+  # Android.bp grepped as cts_*), which then broke librenderengine_test with
+  # undefined module "skia_deps".
   # For production trees that embed CTS modules in the same Android.bp (e.g.
   # external/skia → android_test CtsSkQPTestCases defaults: ["cts_defaults"]),
   # surgically strip those modules instead of deleting the project.
   while IFS= read -r -d '' bp; do
     if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
+      case "$dir" in
+        */build/soong|*/build/soong/*)
+          # Build-system bootstrap; never touch.
+          continue
+          ;;
+      esac
       if _is_test_like_path "$dir"; then
         echo "[redroid-src]   drop $dir (cts/mts leftover)"
         rm -rf "$dir"
@@ -284,7 +294,7 @@ prune_cts_dependent_tests() {
         fi
       fi
     fi
-  done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
+  done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" -o -path "$root/build/soong" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
 
   echo "[redroid-src] pruned ${n} CTS/MTS-dependent test path(s) (kept ${skipped} non-test path(s) with cts symbols)"
 }
@@ -303,9 +313,17 @@ _strip_cts_modules_from_bp() {
 import os, re, sys
 path = sys.argv[1]
 cts_syms = os.environ["CTS_SYMS"]
-# Convert egrep alternation to a Python re that matches whole identifiers.
-# Input examples: cts_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current
-pat = re.compile(r"\b(?:" + cts_syms + r")\b")
+# Convert egrep alternation to a Python re. Quoted alts ("tradefed") match
+# Soong string literals only — do NOT wrap the whole alternation in \b, or the
+# leading " of a quoted alt never sees a word boundary. Unquoted alts get \b
+# so cts_defaults does not match inside unrelated identifiers.
+parts = []
+for alt in cts_syms.split("|"):
+    if alt.startswith('"'):
+        parts.append(alt)
+    else:
+        parts.append(r"\b(?:" + alt + r")\b")
+pat = re.compile("|".join(parts))
 src = open(path, "r", encoding="utf-8", errors="replace").read()
 if not pat.search(src):
     sys.exit(2)
