@@ -438,6 +438,9 @@ prune_removed_product_orphans() {
   echo "[redroid-src] pruning Car/cuttlefish/automotive leftover paths"
   local paths=(
     tools/security
+    # acloud_metrics depends on asuite_* from tools/asuite (removed via remove-project).
+    tools/acloud
+    tools/asuite
     device/generic/opengl-transport
     device/google/cuttlefish
     device/google/cuttlefish_prebuilts
@@ -463,8 +466,8 @@ prune_removed_product_orphans() {
   for d in tools device hardware; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
-  # Symbols only defined under packages/services/Car or cuttlefish trees we remove.
-  local car_syms='carwatchdogd_defaults|libwatchdog_perf_service_defaults|cuttlefish_buildhost_only|android-automotive-large-parcelable|android\.car\.watchdoglib|car-frameworks-service'
+  # Symbols only defined under packages/services/Car, cuttlefish, or asuite trees we remove.
+  local car_syms='carwatchdogd_defaults|libwatchdog_perf_service_defaults|cuttlefish_buildhost_only|android-automotive-large-parcelable|android\.car\.watchdoglib|car-frameworks-service|asuite_cc_client|asuite_metrics|asuite_proto'
   if [[ ${#search[@]} -gt 0 ]]; then
     while IFS= read -r -d '' bp; do
       if grep -Eq "$car_syms" "$bp" 2>/dev/null; then

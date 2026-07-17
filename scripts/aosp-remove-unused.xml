@@ -162,6 +162,8 @@
   <remove-project name="platform/developers/samples/android" />
   <remove-project name="platform/prebuilts/asuite" />
   <remove-project name="platform/tools/asuite" />
+  <!-- acloud_metrics defaults to asuite_cc_client / asuite_metrics from tools/asuite. -->
+  <remove-project name="platform/tools/acloud" />
   <remove-project name="platform/tools/tradefederation/prebuilts" />
   <remove-project name="platform/tools/adt/idea" />
   <remove-project name="platform/tools/base" />
