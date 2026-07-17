@@ -195,17 +195,18 @@ sync_tree() {
 # Used so leftover prune cannot rm -rf external/skia, frameworks/* libs, etc.
 # when a nested Android.bp (or a false-positive grep) mentions a CTS symbol.
 _is_test_like_path() {
-  # Match test/CTS/MTS leaves only — never production project roots (e.g. external/skia).
+  # Match test/CTS/MTS/XTS leaves only — never production project roots (e.g. external/skia).
   # Includes tests_mts (libnativehelper/tests_mts → MtsLibnativehelperTestCases),
-  # *_mts dirs, tests_* prefixes, and classic tests/cts/mts/testing leaves.
+  # *_mts dirs, tests_* prefixes, hostside helpers, xts, and classic tests/cts/mts leaves.
   case "$1" in
     */tests/*|*/tests|*/tests_*/*|*/tests_*|\
     */mts|*/mts/*|*/*_mts|*/*_mts/*|*/mts_*/*|*/mts_*|\
     */cts|*/cts/*|*/testing/*|*/testing|*/test/*|*/test|\
     */javatests/*|*/javatests|*/unitests/*|*/unitests|*/uitests/*|*/uitests|\
-    */hostsidetests/*|*/hostsidetests|*/tests_*/*|*/*_tests/*|*/*_tests|\
+    */hostsidetests/*|*/hostsidetests|*/hostside/*|*/hostside|\
+    */tests_*/*|*/*_tests/*|*/*_tests|\
     */*_test/*|*/*_test|*/*TestCases|*/*TestCases/*|\
-    */sts-common-util/*|*/sts-common-util)
+    */sts-common-util/*|*/sts-common-util|*/xts/*|*/xts)
       return 0
       ;;
     *)
@@ -218,13 +219,15 @@ prune_cts_dependent_tests() {
   local root=${1:-$REDROID_SRC}
   local bp dir n=0 skipped=0
   local search=()
-  # Soong defaults/modules that live only in platform/cts (removed via
-  # aosp-remove-unused.xml). Expand when a new "undefined module" appears from
-  # a test leaf that still references platform/cts.
+  # Soong defaults/modules that live only in platform/cts / tradefed harness
+  # trees (removed or unused for systemimage/vendorimage). Expand when a new
+  # "undefined module" appears from a test leaf.
   # cts(_…)?_defaults covers cts_defaults, cts_support_defaults, and any
   # future cts_*_defaults (PackageManagerServiceTests → cts_support_defaults).
-  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current'
-  echo "[redroid-src] pruning CTS/MTS-default test leaves (platform/cts removed)"
+  # tradefed / cts-tradefed / compatibility-* / cts-install-lib* are host-side
+  # CTS/TF harness modules (fs_mgr tests, FastDeployHostTests, SdkSandbox*, …).
+  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|tradefed|cts-tradefed|compatibility-tradefed|compatibility-host-util|cts-install-lib(-host)?'
+  echo "[redroid-src] pruning CTS/MTS/tradefed-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
   # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.
   # platform_testing/ holds compatibility-common-util-tests → cts_error_prone_rules.

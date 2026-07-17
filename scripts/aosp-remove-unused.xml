@@ -101,9 +101,11 @@
        platform/cts provides soong modules cts_defaults / cts_support_defaults
        etc. Test leaves under packages/modules, frameworks, tools/platform-compat
        (e.g. MtsWifiTestCases, PackageManagerTestOverlayTarget) still default to
-       them; those are not separate repo projects —
-       build-redroid-from-source.sh prunes any Android.bp that still references
-       cts_*_defaults post-sync. -->
+       them; host-side tests also pull tradefed / cts-tradefed /
+       compatibility-host-util / cts-install-lib-host. Those are not separate
+       repo projects for every consumer —
+       build-redroid-from-source.sh prunes Android.bp leaves that still reference
+       cts_*_defaults or tradefed harness modules post-sync. -->
   <remove-project name="platform/cts" />
   <remove-project name="platform/test/cts-root" />
   <remove-project name="platform/test/vts" />
