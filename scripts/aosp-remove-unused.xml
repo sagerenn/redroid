@@ -8,8 +8,10 @@
 <manifest>
   <!-- Host prebuilts for non-Linux.
        Darwin clang/go/bazel are already removed by remote-android redroid.xml —
-       do not re-remove them (duplicate remove-project fails). -->
-  <remove-project name="platform/prebuilts/gcc/linux-x86/host/x86_64-w64-mingw32-4.8" />
+       do not re-remove them (duplicate remove-project fails).
+       Keep x86_64-w64-mingw32-4.8: it defines soong module libwinpthread /
+       libwinpthread-1. liblzma, libmath_headers, liblog_headers still depend on
+       it for windows host variants; removing it fails soong analyze (6ed3885). -->
 
   <!-- Emulator / QEMU (redroid has no kernel / emulator) -->
   <remove-project name="platform/prebuilts/android-emulator" />
