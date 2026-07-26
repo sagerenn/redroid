@@ -253,17 +253,34 @@ prune_cts_dependent_tests() {
     if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
       if _is_test_like_path "$dir"; then
-        echo "[redroid-src]   drop $dir (cts/mts defaults)"
-        rm -rf "$dir"
-        n=$((n + 1))
+        # art/test looks test-like (*/test) but also defines art_gtest_defaults /
+        # libart-gtest / art_test_defaults that art/dexlayout, art/runtime, …
+        # art_*_tests modules still default to. Deleting the tree makes soong
+        # analyze fail: "art_dexlayout_tests depends on undefined module
+        # art_gtest_defaults" (ffa0b6d). Strip csuite_test (and any other
+        # cts_syms modules) in place instead — same idea as external/skia.
+        case "$dir" in
+          */art/test|*/art/test/*)
+            if _strip_cts_modules_from_bp "$bp" "$cts_syms"; then
+              n=$((n + 1))
+            else
+              echo "[redroid-src]   keep $dir (art/test shared defaults; strip miss)"
+              skipped=$((skipped + 1))
+            fi
+            ;;
+          *)
+            echo "[redroid-src]   drop $dir (cts/mts defaults)"
+            rm -rf "$dir"
+            n=$((n + 1))
+            ;;
+        esac
       fi
     fi
   done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
 
   # Belt-and-suspenders: remove any remaining mts test trees under packages/modules
   # and whole suite harness roots under test/ (mts, catbox, app_compat/csuite).
-  # art/test is pure ART runtime tests; its Android.bp uses csuite_test which is
-  # defined only in the removed app_compat/csuite project (686d8ff soong fail).
+  # Do NOT drop art/test here — it hosts art_gtest_defaults (see above).
   if [[ -d $root/packages/modules ]]; then
     while IFS= read -r -d '' dir; do
       echo "[redroid-src]   drop $dir (mts tree)"
@@ -271,7 +288,7 @@ prune_cts_dependent_tests() {
       n=$((n + 1))
     done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
   fi
-  for path in test/mts test/catbox test/app_compat test/framework test/cts-root art/test; do
+  for path in test/mts test/catbox test/app_compat test/framework test/cts-root; do
     if [[ -e $root/$path ]]; then
       echo "[redroid-src]   drop $root/$path (suite harness orphan)"
       rm -rf "$root/$path"
@@ -299,9 +316,23 @@ prune_cts_dependent_tests() {
           ;;
       esac
       if _is_test_like_path "$dir"; then
-        echo "[redroid-src]   drop $dir (cts/mts leftover)"
-        rm -rf "$dir"
-        n=$((n + 1))
+        # art/test defines art_gtest_defaults used by art/*_tests outside art/test
+        # (ffa0b6d). Never rm -rf it in the leftover pass either — strip only.
+        case "$dir" in
+          */art/test|*/art/test/*)
+            if _strip_cts_modules_from_bp "$bp" "$cts_syms"; then
+              n=$((n + 1))
+            else
+              echo "[redroid-src]   keep $dir (art/test shared defaults; leftover strip miss)"
+              skipped=$((skipped + 1))
+            fi
+            ;;
+          *)
+            echo "[redroid-src]   drop $dir (cts/mts leftover)"
+            rm -rf "$dir"
+            n=$((n + 1))
+            ;;
+        esac
       else
         if _strip_cts_modules_from_bp "$bp" "$cts_syms"; then
           n=$((n + 1))
