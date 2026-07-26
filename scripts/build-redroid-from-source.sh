@@ -230,13 +230,19 @@ prune_cts_dependent_tests() {
   # bootstrap packages (soong-cc/java/python/sh) and broke soong-apex.
   # "cts-tradefed-harness" / "tradefed-test-framework" are what mts-tradefed
   # and similar suite binaries list as static_libs (862b05a soong fail).
-  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"tradefed-test-framework"|"cts-tradefed"|"cts-tradefed-harness"|"compatibility-tradefed"|"compatibility-host-util"|"cts-install-lib(-host)?"'
+  # csuite_test is a soong module *type* defined only in platform/test/app_compat/csuite
+  # (remove-project'd). art/test/Android.bp still declares csuite_test modules; with
+  # the type gone soong analyze fails "unrecognized module type csuite_test" (686d8ff).
+  # Bare word-boundary match is safe (unlike tradefed) — csuite_test is not a soong
+  # bootstrap package name.
+  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"tradefed-test-framework"|"cts-tradefed"|"cts-tradefed-harness"|"compatibility-tradefed"|"compatibility-host-util"|"cts-install-lib(-host)?"|csuite_test'
   echo "[redroid-src] pruning CTS/MTS/tradefed-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
   # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.
   # platform_testing/ holds compatibility-common-util-tests → cts_error_prone_rules.
   # test/ holds mts-tradefed / catbox-tradefed when those projects are not removed.
-  for d in packages frameworks platform_testing tools device system hardware test; do
+  # art/ holds art/test (csuite_test consumers); include it so the first-pass find hits it.
+  for d in packages frameworks platform_testing tools device system hardware test art; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
   if [[ ${#search[@]} -eq 0 ]]; then
@@ -256,6 +262,8 @@ prune_cts_dependent_tests() {
 
   # Belt-and-suspenders: remove any remaining mts test trees under packages/modules
   # and whole suite harness roots under test/ (mts, catbox, app_compat/csuite).
+  # art/test is pure ART runtime tests; its Android.bp uses csuite_test which is
+  # defined only in the removed app_compat/csuite project (686d8ff soong fail).
   if [[ -d $root/packages/modules ]]; then
     while IFS= read -r -d '' dir; do
       echo "[redroid-src]   drop $dir (mts tree)"
@@ -263,7 +271,7 @@ prune_cts_dependent_tests() {
       n=$((n + 1))
     done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
   fi
-  for path in test/mts test/catbox test/app_compat test/framework test/cts-root; do
+  for path in test/mts test/catbox test/app_compat test/framework test/cts-root art/test; do
     if [[ -e $root/$path ]]; then
       echo "[redroid-src]   drop $root/$path (suite harness orphan)"
       rm -rf "$root/$path"

@@ -110,7 +110,10 @@
        cts_*_defaults or tradefed harness modules post-sync.
        platform/test/mts defines mts-tradefed → tradefed / cts-tradefed-harness
        (removed with tools/tradefederation/prebuilts); leaving it fails soong
-       analyze (862b05a). Same for catbox / app_compat/csuite / test/framework. -->
+       analyze (862b05a). Same for catbox / app_compat/csuite / test/framework.
+       app_compat/csuite also defines the soong module type csuite_test; art/test
+       (inside platform/art, not a separate project) still uses it — post-sync
+       prune drops art/test (686d8ff soong fail). -->
   <remove-project name="platform/cts" />
   <remove-project name="platform/test/cts-root" />
   <remove-project name="platform/test/mts" />
