@@ -253,14 +253,20 @@ prune_cts_dependent_tests() {
     if grep -Eq "$cts_syms" "$bp" 2>/dev/null; then
       dir=$(dirname "$bp")
       if _is_test_like_path "$dir"; then
-        # art/test looks test-like (*/test) but also defines art_gtest_defaults /
+        # art/test (the directory itself) defines art_gtest_defaults /
         # libart-gtest / art_test_defaults that art/dexlayout, art/runtime, …
-        # art_*_tests modules still default to. Deleting the tree makes soong
-        # analyze fail: "art_dexlayout_tests depends on undefined module
-        # art_gtest_defaults" (ffa0b6d). Strip csuite_test (and any other
-        # cts_syms modules) in place instead — same idea as external/skia.
+        # art_*_tests still default to. Deleting it makes soong analyze fail
+        # (ffa0b6d: art_dexlayout_tests → undefined art_gtest_defaults).
+        # Strip csuite_test (and any other cts_syms modules) in place — same
+        # idea as external/skia.
+        # art/test/* SUBDIRS (odsign, update-rollback, …) are pure host tests.
+        # Their Android.bp often has java_defaults with tradefed/cts-install-lib
+        # plus sibling java_test_host that only defaults: to that local name.
+        # Strip would remove the defaults and leave the consumer dangling
+        # (0002bc6: odsign_e2e_tests_full → undefined odsign_e2e_tests_defaults).
+        # Drop those subdirs whole.
         case "$dir" in
-          */art/test|*/art/test/*)
+          */art/test)
             if _strip_cts_modules_from_bp "$bp" "$cts_syms"; then
               n=$((n + 1))
             else
@@ -316,10 +322,10 @@ prune_cts_dependent_tests() {
           ;;
       esac
       if _is_test_like_path "$dir"; then
-        # art/test defines art_gtest_defaults used by art/*_tests outside art/test
-        # (ffa0b6d). Never rm -rf it in the leftover pass either — strip only.
+        # art/test root only — see first-pass comment. Subdirs under art/test/*
+        # fall through to drop.
         case "$dir" in
-          */art/test|*/art/test/*)
+          */art/test)
             if _strip_cts_modules_from_bp "$bp" "$cts_syms"; then
               n=$((n + 1))
             else
