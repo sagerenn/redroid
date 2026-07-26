@@ -99,7 +99,7 @@
   <remove-project name="device/amlogic/yukawa-kernel" />
   <remove-project name="device/generic/car" />
 
-  <!-- CTS / VTS / MLTS (not needed for systemimage/vendorimage).
+  <!-- CTS / VTS / MLTS / MTS harness (not needed for systemimage/vendorimage).
        platform/cts provides soong modules cts_defaults / cts_support_defaults
        etc. Test leaves under packages/modules, frameworks, tools/platform-compat
        (e.g. MtsWifiTestCases, PackageManagerTestOverlayTarget) still default to
@@ -107,9 +107,16 @@
        compatibility-host-util / cts-install-lib-host. Those are not separate
        repo projects for every consumer —
        build-redroid-from-source.sh prunes Android.bp leaves that still reference
-       cts_*_defaults or tradefed harness modules post-sync. -->
+       cts_*_defaults or tradefed harness modules post-sync.
+       platform/test/mts defines mts-tradefed → tradefed / cts-tradefed-harness
+       (removed with tools/tradefederation/prebuilts); leaving it fails soong
+       analyze (862b05a). Same for catbox / app_compat/csuite / test/framework. -->
   <remove-project name="platform/cts" />
   <remove-project name="platform/test/cts-root" />
+  <remove-project name="platform/test/mts" />
+  <remove-project name="platform/test/catbox" />
+  <remove-project name="platform/test/app_compat/csuite" />
+  <remove-project name="platform/test/framework" />
   <remove-project name="platform/test/vts" />
   <remove-project name="platform/test/vts-testcase/fuzz" />
   <remove-project name="platform/test/vts-testcase/hal" />

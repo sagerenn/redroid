@@ -228,12 +228,15 @@ prune_cts_dependent_tests() {
   # ("tradefed", "cts-tradefed", …). Bare \btradefed\b also matches inside
   # soong-tradefed and tradefed.go, which previously stripped build/soong
   # bootstrap packages (soong-cc/java/python/sh) and broke soong-apex.
-  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"cts-tradefed"|"compatibility-tradefed"|"compatibility-host-util"|"cts-install-lib(-host)?"'
+  # "cts-tradefed-harness" / "tradefed-test-framework" are what mts-tradefed
+  # and similar suite binaries list as static_libs (862b05a soong fail).
+  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"tradefed-test-framework"|"cts-tradefed"|"cts-tradefed-harness"|"compatibility-tradefed"|"compatibility-host-util"|"cts-install-lib(-host)?"'
   echo "[redroid-src] pruning CTS/MTS/tradefed-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
   # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.
   # platform_testing/ holds compatibility-common-util-tests → cts_error_prone_rules.
-  for d in packages frameworks platform_testing tools device system hardware; do
+  # test/ holds mts-tradefed / catbox-tradefed when those projects are not removed.
+  for d in packages frameworks platform_testing tools device system hardware test; do
     [[ -d $root/$d ]] && search+=("$root/$d")
   done
   if [[ ${#search[@]} -eq 0 ]]; then
@@ -251,7 +254,8 @@ prune_cts_dependent_tests() {
     fi
   done < <(find "${search[@]}" -type f -name Android.bp -print0 2>/dev/null || true)
 
-  # Belt-and-suspenders: remove any remaining mts test trees under packages/modules.
+  # Belt-and-suspenders: remove any remaining mts test trees under packages/modules
+  # and whole suite harness roots under test/ (mts, catbox, app_compat/csuite).
   if [[ -d $root/packages/modules ]]; then
     while IFS= read -r -d '' dir; do
       echo "[redroid-src]   drop $dir (mts tree)"
@@ -259,6 +263,13 @@ prune_cts_dependent_tests() {
       n=$((n + 1))
     done < <(find "$root/packages/modules" -type d \( -name mts -o -path '*/tests/mts' \) -print0 2>/dev/null || true)
   fi
+  for path in test/mts test/catbox test/app_compat test/framework test/cts-root; do
+    if [[ -e $root/$path ]]; then
+      echo "[redroid-src]   drop $root/$path (suite harness orphan)"
+      rm -rf "$root/$path"
+      n=$((n + 1))
+    fi
+  done
 
   # Final pass: whole tree except .repo/out/.tmp/build/soong so a missed search
   # root cannot hide a cts_* consumer. NEVER strip/rm under build/soong — those
