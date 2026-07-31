@@ -202,5 +202,9 @@
   <remove-project name="platform/tools/motodev" />
   <remove-project name="toolchain/benchmark" />
   <remove-project name="toolchain/pgo-profiles" />
+  <!-- webrtc defines webrtc_audio_processing / libwebrtc_absl_headers (sole synced-tree
+       consumer: frameworks/av/media/libeffects/preprocessing -> libaudiopreprocessing).
+       prune_webrtc_orphan_deps drops that dir whole; redroid does not package
+       libaudiopreprocessing (media_vendor.mk not in its product chain). -->
   <remove-project name="platform/external/webrtc" />
 </manifest>

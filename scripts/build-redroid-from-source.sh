@@ -183,6 +183,8 @@ sync_tree() {
   # Strip/drop modules that depend on removed cuttlefish host libs (e.g. mk_payload).
   # Runs after the vts sliver restore so cuttlefish syms only match real orphans.
   prune_cuttlefish_orphan_deps
+  # Strip/drop modules that depend on removed external/webrtc (e.g. libaudiopreprocessing).
+  prune_webrtc_orphan_deps
   # Drop leftover trees that depend on removed Car/cuttlefish modules (belt-and-suspenders
   # if remove-project was missed or a nested leaf remains).
   prune_removed_product_orphans
@@ -411,6 +413,60 @@ prune_cuttlefish_orphan_deps() {
     fi
   done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" -o -path "$root/build/soong" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
   echo "[redroid-src] pruned ${n} cuttlefish-orphan path(s) (kept ${skipped})"
+}
+
+# external/webrtc is remove-project'd for disk. Its modules webrtc_audio_processing
+# and libwebrtc_absl_headers are defined ONLY there, so any module referencing them
+# is an orphan and fails soong analyze ("X depends on undefined module
+# webrtc_audio_processing"). The sole consumer in the synced tree (cuttlefish,
+# which also used libwebrtc_absl_headers, is already removed) is
+# frameworks/av/media/libeffects/preprocessing: libaudiopreprocessing (+ its
+# defaults) static_libs webrtc_audio_processing and header_libs libwebrtc_absl_headers;
+# benchmarks/preprocessing_benchmark defaults to the same. redroid does NOT package
+# libaudiopreprocessing (media_vendor.mk — the only place it is listed — is NOT in
+# redroid's product chain: core_64_bit_only -> aosp_base -> full_base ->
+# generic_no_telephony), and the default audio_effects.xml redroid ships does NOT
+# list the pre_processing library. Drop the whole preprocessing dir: every module
+# in it is webrtc-dependent and unused by redroid. (Restoring webrtc was rejected —
+# it pulls libaom/libvpx/libopus/libsrtp2/libyuv/libpffft/rnnoise/usrsctp, a heavy
+# chain, and risks ENOSPC on the ~100G CI volume for a lib redroid never builds.)
+prune_webrtc_orphan_deps() {
+  local root=${1:-$REDROID_SRC}
+  local bp dir n=0 skipped=0
+  local wb_syms='webrtc_audio_processing|libwebrtc_absl_headers'
+  echo "[redroid-src] pruning webrtc-orphan modules (external/webrtc removed)"
+  if [[ -d $root/frameworks/av/media/libeffects/preprocessing ]]; then
+    echo "[redroid-src]   drop frameworks/av/media/libeffects/preprocessing (webrtc-orphan audio effect)"
+    rm -rf "$root/frameworks/av/media/libeffects/preprocessing"
+    n=$((n + 1))
+  fi
+  # Safety sweep: any other Android.bp referencing the removed webrtc modules.
+  while IFS= read -r -d '' bp; do
+    if grep -Eq "$wb_syms" "$bp" 2>/dev/null; then
+      dir=$(dirname "$bp")
+      case "$dir" in
+        */build/soong|*/build/soong/*)
+          continue
+          ;;
+        */media/libeffects/preprocessing|*/media/libeffects/preprocessing/*)
+          continue  # already dropped above
+          ;;
+      esac
+      if _is_test_like_path "$dir"; then
+        echo "[redroid-src]   drop $dir (webrtc dep in test path)"
+        rm -rf "$dir"
+        n=$((n + 1))
+      else
+        if _strip_cts_modules_from_bp "$bp" "$wb_syms"; then
+          n=$((n + 1))
+        else
+          echo "[redroid-src]   keep $dir (webrtc dep strip miss; not deleting production tree)"
+          skipped=$((skipped + 1))
+        fi
+      fi
+    fi
+  done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" -o -path "$root/build/soong" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
+  echo "[redroid-src] pruned ${n} webrtc-orphan path(s) (kept ${skipped})"
 }
 
 # Strip top-level Soong modules whose body references platform/cts-only symbols
