@@ -177,6 +177,12 @@ sync_tree() {
   # (protologtool-lib depends on it). Must run AFTER prune_cts_dependent_tests
   # so the prune does not see a cts/ tree with cts_syms and drop it.
   restore_cts_json_sliver
+  # Restore libvts_vintf_test_common (assemble_vintf build host tool needs it).
+  # After prune_removed_product_orphans so the orphan scan does not see the leaf.
+  restore_vts_vintf_sliver
+  # Strip/drop modules that depend on removed cuttlefish host libs (e.g. mk_payload).
+  # Runs after the vts sliver restore so cuttlefish syms only match real orphans.
+  prune_cuttlefish_orphan_deps
   # Drop leftover trees that depend on removed Car/cuttlefish modules (belt-and-suspenders
   # if remove-project was missed or a nested leaf remains).
   prune_removed_product_orphans
@@ -361,9 +367,56 @@ prune_cts_dependent_tests() {
   echo "[redroid-src] pruned ${n} CTS/MTS-dependent test path(s) (kept ${skipped} non-test path(s) with cts symbols)"
 }
 
+# Strip/drop modules that depend on cuttlefish host libs (device/google/cuttlefish
+# is remove-project'd for disk). The 4 libs mk_payload needs — libcdisk_spec,
+# libcuttlefish_fs, libcuttlefish_utils, libimage_aggregator — are defined ONLY
+# in device/google/cuttlefish, so any module referencing them is an orphan and
+# fails soong analyze ("X depends on undefined module libcuttlefish_fs").
+# Known orphan: packages/modules/Virtualization/microdroid/payload/Android.bp
+# → mk_payload (cc_binary_host). redroid does NOT build the com.android.virt
+# APEX / AVF (device_redroid has no virt/microdroid refs), so mk_payload is never
+# invoked — strip it in place, keeping lib_microdroid_metadata_proto (apexd needs
+# it). mk_payload's only external consumer (Virtualization/tests/hostside) is
+# already dropped by prune_cts_dependent_tests (it lists "tradefed" → cts_syms).
+# crosvm defines its OWN libcdisk_spec_proto (rust) and does NOT depend on the
+# cuttlefish cc lib, so it is unaffected. Restoring the cuttlefish sliver instead
+# was rejected: cone restore pulls cuttlefish root Android.bp which defines extra
+# modules (tombstone_transmit_tests, cf_dtb, …) that would dangle too.
+prune_cuttlefish_orphan_deps() {
+  local root=${1:-$REDROID_SRC}
+  local bp dir n=0 skipped=0
+  # Module names defined only in the removed device/google/cuttlefish tree.
+  local cf_syms='libcdisk_spec|libcuttlefish_fs|libcuttlefish_utils|libimage_aggregator|libvsock_utils|libcuttlefish_fs_product'
+  echo "[redroid-src] pruning cuttlefish-host-lib orphan modules (cuttlefish removed)"
+  while IFS= read -r -d '' bp; do
+    if grep -Eq "$cf_syms" "$bp" 2>/dev/null; then
+      dir=$(dirname "$bp")
+      case "$dir" in
+        */build/soong|*/build/soong/*)
+          continue
+          ;;
+      esac
+      if _is_test_like_path "$dir"; then
+        echo "[redroid-src]   drop $dir (cuttlefish dep in test path)"
+        rm -rf "$dir"
+        n=$((n + 1))
+      else
+        if _strip_cts_modules_from_bp "$bp" "$cf_syms"; then
+          n=$((n + 1))
+        else
+          echo "[redroid-src]   keep $dir (cuttlefish dep strip miss; not deleting production tree)"
+          skipped=$((skipped + 1))
+        fi
+      fi
+    fi
+  done < <(find "$root" \( -path "$root/.repo" -o -path "$root/out" -o -path "$root/.tmp" -o -path "$root/build/soong" \) -prune -o -type f -name Android.bp -print0 2>/dev/null || true)
+  echo "[redroid-src] pruned ${n} cuttlefish-orphan path(s) (kept ${skipped})"
+}
+
 # Strip top-level Soong modules whose body references platform/cts-only symbols
 # (cts_defaults, etc.) from a production Android.bp, without removing the tree.
 # Returns 0 if at least one module was removed and no cts_syms remain; 1 otherwise.
+# Also reused by prune_cuttlefish_orphan_deps (cf_syms passed as $2).
 _strip_cts_modules_from_bp() {
   local bp=$1
   local cts_syms=$2
@@ -540,6 +593,60 @@ restore_cts_json_sliver() {
   # ALL defined modules, not just build targets — a dangling jazzer dep would
   # fail analyze. Fuzzers are not needed for systemimage; drop the dir.
   rm -rf "$root/cts/libs/json/fuzzers"
+  if [[ ! -f $dst/Android.bp ]]; then
+    echo "[redroid-src] ERROR: $dst/Android.bp missing after sparse-clone" >&2
+    return 1
+  fi
+  echo "[redroid-src]   restored $dst ($(find "$dst" -type f | wc -l) files)"
+}
+
+# Restore the ONE vts-testcase sliver production needs: libvts_vintf_test_common.
+# platform/test/vts-testcase/hal is remove-project'd (VTS harness, multi-GB).
+# But system/libvintf defines assemble_vintf (cc_binary_host, a build-time host
+# tool that assembles VINTF manifests — invoked by build/make) which statically
+# links libassemblevintf → libvts_vintf_test_common (defined ONLY in
+# test/vts-testcase/hal/treble/vintf/libvts_vintf_test_common/Android.bp).
+# Removing all of vts-testcase/hal therefore breaks soong analyze:
+#   system/libvintf/Android.bp:173: "libassemblevintf" depends on undefined
+#   module "libvts_vintf_test_common"   (9407f1e arm64 run 30597556330)
+# The sliver is self-contained: one cc_library_static, src common.cpp, shared_libs
+# libbase + libvintf (both present). Sparse-clone the leaf dir; drop the parent
+# Android.bp files (root defines VtsHal*Defaults; treble/vintf defines
+# vts_treble_vintf_test_defaults + test modules that dangle on vts libs) — keep
+# only the leaf libvts_vintf_test_common/Android.bp. ~148K vs multi-GB full sync.
+restore_vts_vintf_sliver() {
+  local root=${1:-$REDROID_SRC}
+  local leaf="test/vts-testcase/hal/treble/vintf/libvts_vintf_test_common"
+  local dst="$root/$leaf"
+  echo "[redroid-src] restoring $leaf (libvts_vintf_test_common for assemble_vintf)"
+  if [[ -e $root/test/vts-testcase ]]; then
+    rm -rf "$root/test/vts-testcase"
+  fi
+  local attempt
+  for attempt in 1 2 3; do
+    if git clone --depth 1 --branch "$REDROID_AOSP_TAG" \
+         --filter=blob:none --sparse \
+         https://android.googlesource.com/platform/test/vts-testcase/hal \
+         "$root/test/vts-testcase/hal" 2>/dev/null \
+       && git -C "$root/test/vts-testcase/hal" sparse-checkout set --cone treble/vintf/libvts_vintf_test_common 2>/dev/null; then
+      break
+    fi
+    echo "[redroid-src]   vts sparse-clone attempt ${attempt}/3 failed; retrying..." >&2
+    rm -rf "$root/test/vts-testcase"
+    sleep $((attempt * 5))
+    if [[ $attempt -eq 3 ]]; then
+      echo "[redroid-src] ERROR: could not restore libvts_vintf_test_common" >&2
+      return 1
+    fi
+  done
+  rm -rf "$root/test/vts-testcase/hal/.git"
+  # Drop parent Android.bp files (defined by cone checkout): root defines
+  # VtsHal*Defaults (dangle on libvts_*); treble/vintf defines
+  # vts_treble_vintf_test_defaults + cc_test modules (dangle on vts libs).
+  # Keep ONLY the leaf libvts_vintf_test_common/Android.bp (self-contained).
+  rm -f "$root/test/vts-testcase/hal/Android.bp" \
+        "$root/test/vts-testcase/hal/treble/Android.bp" \
+        "$root/test/vts-testcase/hal/treble/vintf/Android.bp"
   if [[ ! -f $dst/Android.bp ]]; then
     echo "[redroid-src] ERROR: $dst/Android.bp missing after sparse-clone" >&2
     return 1

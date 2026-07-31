@@ -56,6 +56,10 @@
   <remove-project name="device/google/coral" />
   <remove-project name="device/google/coral-kernel" />
   <remove-project name="device/google/coral-sepolicy" />
+  <!-- cuttlefish defines libcdisk_spec/libcuttlefish_fs/libcuttlefish_utils/libimage_aggregator.
+       packages/modules/Virtualization/microdroid/payload mk_payload static_libs those;
+       build-redroid-from-source.sh prune_cuttlefish_orphan_deps strips mk_payload in place
+       (redroid has no AVF). crosvm has its own rust libcdisk_spec_proto, unaffected. -->
   <remove-project name="device/google/cuttlefish" />
   <remove-project name="device/google/cuttlefish_prebuilts" />
   <!-- Host-only virglrenderer for cuttlefish; depends on cuttlefish_buildhost_only. -->
@@ -133,6 +137,9 @@
   <remove-project name="platform/test/framework" />
   <remove-project name="platform/test/vts" />
   <remove-project name="platform/test/vts-testcase/fuzz" />
+    <!-- vts-testcase/hal defines libvts_vintf_test_common (assemble_vintf build host
+       tool needs it). restore_vts_vintf_sliver sparse-restores ONLY that leaf; the
+       rest of the tree dangles on removed tradefed/vts harness modules. -->
   <remove-project name="platform/test/vts-testcase/hal" />
   <remove-project name="platform/test/vts-testcase/hal-trace" />
   <remove-project name="platform/test/vts-testcase/kernel" />
