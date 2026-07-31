@@ -116,6 +116,15 @@
        strip csuite_test from art/test/Android.bp only (keep art_gtest_defaults
        for art/dexlayout etc.); drop art/test/* subdirs whole (odsign etc.
        co-define local defaults + consumers — strip leaves dangling refs). -->
+  <!-- platform/cts is removed for disk (~4G; the ~100G LVM is why cts was cut).
+       cts itself is NOT safe to keep whole: it defines cts-tradefed /
+       cts-tradefed-harness / cts-install-lib(-host) which reference the removed
+       tools/tradefederation/prebuilts modules (tradefed / compatibility-host-util /
+       compatibility-tradefed) and would fail soong analyze. But ONE cts sliver is
+       needed in production: frameworks/base/tools/protologtool → protologtool-lib
+       depends on "jsonlib" (defined only in cts/libs/json/Android.bp, self-contained:
+       json + jsonlib, no tradefed refs). build-redroid-from-source.sh sparse-restores
+       ONLY cts/libs/json post-sync via restore_cts_json_sliver. -->
   <remove-project name="platform/cts" />
   <remove-project name="platform/test/cts-root" />
   <remove-project name="platform/test/mts" />

@@ -169,8 +169,14 @@ sync_tree() {
   # platform/cts is removed for disk; soong still parses MTS/CTS test Android.bp under
   # packages/modules/* that defaults: ["cts_defaults"] (e.g. MtsWifiTestCases). Those
   # leaves are not separate repo projects, so drop them after sync. Never needed for
-  # systemimage/vendorimage.
+  # systemimage/vendorimage. The ONE cts sliver production needs (cts/libs/json →
+  # jsonlib, for frameworks/base/tools/protologtool) is sparse-restored separately
+  # by restore_cts_json_sliver; see that function for why cts cannot be kept whole.
   prune_cts_dependent_tests
+  # Restore cts/libs/json (jsonlib) — the one cts sliver production needs
+  # (protologtool-lib depends on it). Must run AFTER prune_cts_dependent_tests
+  # so the prune does not see a cts/ tree with cts_syms and drop it.
+  restore_cts_json_sliver
   # Drop leftover trees that depend on removed Car/cuttlefish modules (belt-and-suspenders
   # if remove-project was missed or a nested leaf remains).
   prune_removed_product_orphans
@@ -482,6 +488,63 @@ PY
     return 1
   fi
   return 0
+}
+
+# Restore the ONE cts sliver that production actually needs: cts/libs/json.
+# platform/cts is remove-project'd for disk (~4G; the ~100G LVM is why cts was
+# cut). But frameworks/base/tools/protologtool defines protologtool-lib with
+# static_libs ["javaparser","platformprotos","jsonlib"], and "jsonlib" (plus its
+# underlying "json" java_library) is defined ONLY in cts/libs/json/Android.bp.
+# Removing all of cts therefore breaks soong analyze:
+#   frameworks/base/tools/protologtool/Android.bp: "protologtool-lib" depends on
+#   undefined module "jsonlib"   (6bbfbe6 arm64 run 30207925438)
+# Keeping cts whole is NOT an option: cts itself defines cts-tradefed /
+# cts-tradefed-harness / cts-install-lib(-host) which reference the removed
+# tools/tradefederation/prebuilts modules (tradefed / compatibility-host-util /
+# compatibility-tradefed). So instead of re-syncing 4G we sparse-clone ONLY
+# libs/json from the AOSP tag. cts/libs/json/Android.bp is self-contained
+# (json + jsonlib, no cts_syms / no tradefed refs) so it passes soong analyze
+# and the prune_cts_dependent_tests final pass leaves it untouched (no match).
+restore_cts_json_sliver() {
+  local root=${1:-$REDROID_SRC}
+  local dst="$root/cts/libs/json"
+  echo "[redroid-src] restoring cts/libs/json (jsonlib for protologtool-lib)"
+  if [[ -e $root/cts ]]; then
+    # Idempotent: clear any prior sliver (could be a stale full cts checkout).
+    rm -rf "$root/cts"
+  fi
+  local attempt
+  for attempt in 1 2 3; do
+    # --also-filter-submodules is NOT used: it requires --recurse-submodules and
+    # fails the clone. cts has no submodules at this tag, so plain --sparse is
+    # enough. --filter=blob:none defers blob fetch; sparse-checkout --cone
+    # limits the working tree to libs/json only.
+    if git clone --depth 1 --branch "$REDROID_AOSP_TAG" \
+         --filter=blob:none --sparse \
+         https://android.googlesource.com/platform/cts "$root/cts" 2>/dev/null \
+       && git -C "$root/cts" sparse-checkout set --cone libs/json 2>/dev/null; then
+      break
+    fi
+    echo "[redroid-src]   cts sparse-clone attempt ${attempt}/3 failed; retrying..." >&2
+    rm -rf "$root/cts"
+    sleep $((attempt * 5))
+    if [[ $attempt -eq 3 ]]; then
+      echo "[redroid-src] ERROR: could not restore cts/libs/json; soong will fail on jsonlib" >&2
+      return 1
+    fi
+  done
+  # Drop the clone metadata — keep only the plain working files. Plain dirs are
+  # fine for soong; .git would needlessly hold object storage on the CI volume.
+  rm -rf "$root/cts/.git"
+  # fuzzers/ defines json-reader-fuzzer (java_fuzz_host → jazzer). Soong resolves
+  # ALL defined modules, not just build targets — a dangling jazzer dep would
+  # fail analyze. Fuzzers are not needed for systemimage; drop the dir.
+  rm -rf "$root/cts/libs/json/fuzzers"
+  if [[ ! -f $dst/Android.bp ]]; then
+    echo "[redroid-src] ERROR: $dst/Android.bp missing after sparse-clone" >&2
+    return 1
+  fi
+  echo "[redroid-src]   restored $dst ($(find "$dst" -type f | wc -l) files)"
 }
 
 # Drop trees that depend on modules from removed Car / cuttlefish projects.
