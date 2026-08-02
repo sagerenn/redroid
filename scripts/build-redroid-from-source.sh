@@ -249,7 +249,7 @@ prune_cts_dependent_tests() {
   # the type gone soong analyze fails "unrecognized module type csuite_test" (686d8ff).
   # Bare word-boundary match is safe (unlike tradefed) — csuite_test is not a soong
   # bootstrap package name.
-  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"tradefed-test-framework"|"cts-tradefed"|"cts-tradefed-harness"|"compatibility-tradefed"|"compatibility-host-util"|"cts-install-lib(-host)?"|csuite_test'
+  local cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"tradefed-test-framework"|"cts-tradefed"|"cts-tradefed-harness"|"compatibility-tradefed"|"compatibility-host-util"|"compatibility-device-util-axt"|"cts-install-lib(-host)?"|csuite_test'
   echo "[redroid-src] pruning CTS/MTS/tradefed-default test leaves (platform/cts removed)"
   # tools/ holds platform-compat SharedLibraryInfoTestApp etc.; system/ holds
   # timezone apex MTS tests (MtsTimeZoneDataTestCases) that default to cts_defaults.
