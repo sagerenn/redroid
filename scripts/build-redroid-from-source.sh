@@ -802,7 +802,7 @@ prune_removed_product_orphans() {
 # all direct prunes + sliver restores.
 prune_orphan_module_cascade() {
   local root=${1:-$REDROID_SRC}
-  local cts_syms=$2
+  local cts_syms=${2:-}
   [[ -z $cts_syms ]] && cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"tradefed-test-framework"|"cts-tradefed"|"cts-tradefed-harness"|"compatibility-tradefed"|"compatibility-host-util"|"compatibility-device-util-axt"|"cts-install-lib(-host)?"|csuite_test'
   echo "[redroid-src] resolving orphan-module cascade (direct cts_syms + indirect refs)"
   CTS_SYMS="$cts_syms" python3 - "$root" <<'PY'
