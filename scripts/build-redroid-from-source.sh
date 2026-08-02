@@ -188,6 +188,12 @@ sync_tree() {
   # Drop leftover trees that depend on removed Car/cuttlefish modules (belt-and-suspenders
   # if remove-project was missed or a nested leaf remains).
   prune_removed_product_orphans
+  # Whole-tree orphan resolver (final safety net). Catches indirect orphans
+  # the direct prunes miss: a module referencing a just-removed module without
+  # itself matching cts_syms (e.g. flickerlib -> flickerlib-core). Runs LAST,
+  # after all direct prunes + sliver restores, so restored modules are seen as
+  # available (not orphaned) and build/soong is left untouched.
+  prune_orphan_module_cascade
 
   echo "[redroid-src] applying redroid patches"
   patches_dir=$(mktemp -d)
@@ -773,6 +779,199 @@ prune_removed_product_orphans() {
   fi
 
   echo "[redroid-src] pruned ${n} Car/cuttlefish/automotive orphan path(s)"
+}
+
+# Whole-tree orphan resolver with cascade. This is the general fix for the
+# "strip leaves a dangling consumer" class that bit art/test/odsign (0002bc6)
+# and platform_testing/libraries/flicker (dcb1822 run): the direct prune
+# (prune_cts_dependent_tests) drops/strips modules that reference cts_syms,
+# but a module that references a JUST-REMOVED module (without itself matching
+# cts_syms) is left dangling -> soong analyze "X depends on undefined Y".
+# Resolve to a fixpoint:
+#   1. Parse every Android.bp (excl .repo/out/.tmp/build/soong) into top-level
+#      modules (name, dir, body, set of quoted module-ref tokens).
+#   2. Seed orphan set = modules whose body matches cts_syms (direct refs to
+#      removed cts/tradefed trees). cts_syms already enumerates those symbols.
+#   3. Cascade: any module referencing an orphan name (exact quoted token) is
+#      also an orphan. Repeat until stable.
+#   4. Test-like orphan dirs -> rm -rf. Production orphan modules -> strip just
+#      that module in place (keep non-orphan siblings, e.g. libskia).
+# Sliver-restored modules (json/jsonlib, libvts_vintf_test_common) never orphan:
+# they reference no cts_syms and no orphan names (deps libbase/libvintf present).
+# build/soong is excluded (bootstrap plugins). Runs LAST as a safety net after
+# all direct prunes + sliver restores.
+prune_orphan_module_cascade() {
+  local root=${1:-$REDROID_SRC}
+  local cts_syms=$2
+  [[ -z $cts_syms ]] && cts_syms='cts(_[a-zA-Z0-9_]+)?_defaults|cts_error_prone_rules(_tests)?|mts-target-sdk-version-current|"tradefed"|"tradefed-test-framework"|"cts-tradefed"|"cts-tradefed-harness"|"compatibility-tradefed"|"compatibility-host-util"|"compatibility-device-util-axt"|"cts-install-lib(-host)?"|csuite_test'
+  echo "[redroid-src] resolving orphan-module cascade (direct cts_syms + indirect refs)"
+  CTS_SYMS="$cts_syms" python3 - "$root" <<'PY'
+import os, re, sys
+root = sys.argv[1]
+cts_syms = os.environ["CTS_SYMS"]
+parts = []
+for alt in cts_syms.split("|"):
+    if alt.startswith('"'):
+        parts.append(alt)
+    else:
+        parts.append(r"\b(?:" + alt + r")\b")
+pat = re.compile("|".join(parts))
+qstr = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+def is_test_like(d):
+    import re as _r
+    pats = [
+        r".*/tests(/|$)", r".*/tests_[^/]*(/|$)", r".*/[^/]*_tests(/|$)",
+        r".*/mts(/|$)", r".*/[^/]*_mts(/|$)", r".*/mts_[^/]*(/|$)",
+        r".*/cts(/|$)", r".*/testing(/|$)", r".*/test(/|$)",
+        r".*/javatests(/|$)", r".*/hostsidetests(/|$)", r".*/hostside(/|$)",
+        r".*/[^/]*_test(/|$)", r".*TestCases(/|$)", r".*/xts(/|$)",
+        r".*/sts-common-util(/|$)", r".*/benchmarks(/|$)", r".*/fuzz(/|$)",
+    ]
+    for p in pats:
+        if _r.search(p, d): return True
+    return False
+
+# Collect modules: name -> {dir, path, start, end, refs(set), orphan(bool)}
+modules = {}            # name -> dict
+file_modules = {}        # path -> list of module dicts (with raw block text + offsets)
+excluded = lambda p: ("/.repo/" in p or p.startswith(root + "/.repo") or
+                      "/out/" in p or p.startswith(root + "/out") or
+                      "/.tmp/" in p or "/build/soong" in p)
+
+def parse_file(path):
+    try:
+        src = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return None
+    mods = []
+    n = len(src); i = 0
+    while i < n:
+        m = re.match(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\{", src[i:])
+        if m and (i == 0 or src[i-1] in "\n\r\t "):
+            start = i
+            j = i + m.end() - 1
+            depth = 0; k = j
+            while k < n:
+                c = src[k]
+                if c == "{": depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        k += 1; break
+                elif c == '"':
+                    k += 1
+                    while k < n:
+                        if src[k] == "\\": k += 2; continue
+                        if src[k] == '"': k += 1; break
+                        k += 1
+                    continue
+                elif c == "/" and k+1 < n and src[k+1] == "/":
+                    k += 2
+                    while k < n and src[k] not in "\n\r": k += 1
+                    continue
+                elif c == "/" and k+1 < n and src[k+1] == "*":
+                    k += 2
+                    while k+1 < n and not (src[k] == "*" and src[k+1] == "/"): k += 1
+                    k = min(k+2, n); continue
+                k += 1
+            block = src[start:k]
+            nm = re.search(r'\bname:\s*"([^"]+)"', block)
+            if nm:
+                name = nm.group(1)
+                refs = set(qstr.findall(block))
+                refs.discard(name)
+                mods.append({"name": name, "path": path, "start": start,
+                             "end": k, "block": block, "refs": refs,
+                             "orphan": bool(pat.search(block))})
+            i = k
+            while i < n and src[i] in "\r\n": i += 1
+            continue
+        i += 1
+    return mods
+
+bp_files = []
+for dirpath, _, files in os.walk(root):
+    if excluded(dirpath + "/"):
+        continue
+    for fn in files:
+        if fn == "Android.bp":
+            p = os.path.join(dirpath, fn)
+            if excluded(p): continue
+            mods = parse_file(p)
+            if mods:
+                bp_files.append(p)
+                file_modules.setdefault(p, [])
+                for md in mods:
+                    # first definition wins on name collisions (soong errors on dup anyway)
+                    if md["name"] not in modules:
+                        modules[md["name"]] = md
+                    file_modules[p].append(md)
+
+# Cascade orphan propagation to fixpoint.
+changed = True
+while changed:
+    changed = False
+    for name, md in modules.items():
+        if md["orphan"]:
+            continue
+        if md["refs"] and (md["refs"] & {n for n, m in modules.items() if m["orphan"]}):
+            md["orphan"] = True
+            changed = True
+
+# Apply: NEVER rmtree a directory (that risked nuking sliver-restored trees —
+# e.g. the restored cts/Android.bp defines cts_defaults which matches cts_syms
+# -> all-orphan -> rmtree(cts/) would delete cts/libs/json/jsonlib). Dir-level
+# drops are already handled by the direct prunes. The cascade only ever:
+#  - drops an individual Android.bp whose modules are ALL orphan (no survivors),
+#    or
+#  - strips just the orphan modules from a file that still has survivors.
+import shutil
+dropped_files = 0
+stripped = 0
+for p in list(file_modules):
+    if not os.path.exists(p):
+        continue
+    orphan_mods = [md for md in file_modules[p] if md["orphan"]]
+    if not orphan_mods:
+        continue
+    all_orphan = all(md["orphan"] for md in file_modules[p]) and len(file_modules[p]) > 0
+    if all_orphan:
+        # Every module orphaned -> drop the file (no survivors). Leave the dir
+        # in place; sibling files/bps are handled on their own iteration, and
+        # dir-level rm is the direct prunes' job, not the cascade's.
+        rel = os.path.relpath(p, root)
+        print(f"[redroid-src]   drop {rel} (orphan cascade, all modules)")
+        try:
+            os.remove(p)
+            dropped_files += 1
+        except OSError:
+            pass
+        continue
+    # Strip orphan modules, keep survivors. Rewrite file with non-orphan blocks.
+    try:
+        src = open(p, encoding="utf-8", errors="replace").read()
+    except OSError:
+        continue
+    # Sort descending by offset so removals don't shift earlier offsets.
+    offs = sorted(((md["start"], md["end"]) for md in orphan_mods), reverse=True)
+    new = src
+    for s, e in offs:
+        # Extend end to swallow a trailing newline.
+        ee = e
+        if ee < len(new) and new[ee] == "\n": ee += 1
+        elif ee < len(new) and new[ee] == "\r":
+            ee += 1
+            if ee < len(new) and new[ee] == "\n": ee += 1
+        new = new[:s] + new[ee:]
+    rel = os.path.relpath(p, root)
+    names = ",".join(md["name"] for md in orphan_mods)
+    print(f"[redroid-src]   strip {rel} (cascade removed: {names})")
+    open(p, "w", encoding="utf-8").write(new)
+    stripped += 1
+
+print(f"[redroid-src] cascade: dropped {dropped_files} file(s), stripped {stripped} file(s)")
+PY
 }
 
 build_builder_image() {
