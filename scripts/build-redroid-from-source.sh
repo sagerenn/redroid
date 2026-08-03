@@ -833,6 +833,46 @@ for alt in cts_syms.split("|"):
 pat = re.compile("|".join(parts))
 qstr = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
+def strip_comments(s):
+    # Remove // line and /* */ block comments so qstr.findall sees only real
+    # string literals — quoted text INSIDE a comment (e.g. the bluetooth
+    # defaults' `// if sdk_version="" this gets automatically included` inside a
+    # libs:[...] list) was being harvested as a module ref. The empty string ""
+    # from that comment is not an identifier, so bad_refs_for filtered it OUT of
+    # the bad set -> it stayed in the keep list -> when a SIBLING dep in the same
+    # list was bad and the list got re-emitted, the "" was emitted as a literal
+    # dep -> soong "depends on undefined module \"\"" (run 30842131164 arm64:
+    # BluetoothTests/FrameworkBluetoothTests/FrameworksWifiNonUpdatableApiTests).
+    # String literals are preserved verbatim (a // or /* inside a string is not a
+    # comment), so real module refs survive. Soong ignores comments, so the
+    # harvest now matches exactly what soong resolves.
+    out = []
+    i = 0; n = len(s)
+    while i < n:
+        c = s[i]
+        if c == '"':
+            out.append(c); i += 1
+            while i < n:
+                if s[i] == '\\' and i + 1 < n:
+                    out.append(s[i]); out.append(s[i + 1]); i += 2; continue
+                out.append(s[i])
+                if s[i] == '"':
+                    i += 1; break
+                i += 1
+            continue
+        if c == '/' and i + 1 < n and s[i + 1] == '/':
+            while i < n and s[i] not in "\n\r":
+                i += 1
+            continue
+        if c == '/' and i + 1 < n and s[i + 1] == '*':
+            i += 2
+            while i + 1 < n and not (s[i] == '*' and s[i + 1] == '/'):
+                i += 1
+            i = min(i + 2, n)
+            continue
+        out.append(c); i += 1
+    return "".join(out)
+
 def is_test_like(d):
     import re as _r
     pats = [
@@ -985,10 +1025,16 @@ def parse_file(path):
                              "export_shared_lib_headers",
                              "defaults", "required", "optional_uses_libs",
                              "tools"):
-                    # match prop: [ "a", "b" ] possibly across lines.
+                    # match prop: [ "a", "b" ] possibly across lines. Strip
+                    # comments first so quoted text in a // or /* */ comment
+                    # inside the list is not harvested as a module ref (see
+                    # strip_comments). Drop empty strings — a real "" dep is a
+                    # malformed .bp, and a comment-harvested "" must never enter
+                    # refs.
                     for mm in re.finditer(
                         r"\b" + prop + r"\s*:\s*\[(.*?)\]", block, re.S):
-                        refs |= set(qstr.findall(mm.group(1)))
+                        refs |= {r for r in qstr.findall(strip_comments(mm.group(1)))
+                                 if r}
                 # SINGLE-VALUE module-name properties (not a list, not a file
                 # path). `instrumentation_for: "AppName"` names the app a test
                 # instruments — a module ref. Harvest so a test referencing an
@@ -1261,9 +1307,11 @@ def strip_refs_from_block(block, bad):
     out = block
     for prop in DEP_PROPS:
         def repl(m):
-            inner = m.group(1)
+            inner = strip_comments(m.group(1))
             items = qstr.findall(inner)
-            keep = [it for it in items if it not in bad]
+            # drop empty strings (defense-in-depth: a comment-harvested "" must
+            # never be re-emitted as a literal dep -> soong "undefined module \"\"")
+            keep = [it for it in items if it and it not in bad]
             if len(keep) == len(items):
                 return m.group(0)  # nothing to remove in this list
             return prop + ": [" + ", ".join('"' + it + '"' for it in keep) + "]"
@@ -1363,10 +1411,12 @@ for p, _entries in build_directives.items():
     d = os.path.dirname(p)
     removed_entries = []
     def repl_build(m):
-        inner = m.group(1)
+        inner = strip_comments(m.group(1))
         items = qstr.findall(inner)
         keep = []
         for it in items:
+            if not it:
+                continue
             if os.path.isfile(os.path.normpath(os.path.join(d, it))):
                 keep.append(it)
             else:
