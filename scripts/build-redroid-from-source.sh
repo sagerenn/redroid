@@ -956,12 +956,23 @@ def parse_file(path):
                 # -> would break the genrule/ninja link). Soong analyze never
                 # validates srcs FILE existence (that is ninja's job), so dropping
                 # them from the harvest costs no soong-analyze coverage.
+                # `tools` lists module names (cc_binary host tools like
+                # "hidl-gen", "soong_zip") — harvested. `tool_files` lists FILE
+                # paths (scripts like "hidl_error_test.sh") — NOT harvested, same
+                # as srcs/data below: a file ref is never a module name. The
+                # dots-admitting identifier filter (run 30822768592) made
+                # "foo.sh" fullmatch the identifier pattern -> every genrule with
+                # a `tool_files` entry gained a false bad ref -> test genrules
+                # falsely REMOVED, production genrules' tool_files list silently
+                # ref-stripped (losing the script). tool_files' `:module` form is
+                # already rejected by the colon in the identifier filter, so
+                # excluding the bare file-path form costs no real dep coverage.
                 for prop in ("static_libs", "shared_libs", "libs",
                              "header_libs", "export_header_libs",
                              "whole_static_libs", "export_static_lib_headers",
                              "export_shared_lib_headers",
                              "defaults", "required", "optional_uses_libs",
-                             "tools", "tool_files"):
+                             "tools"):
                     # match prop: [ "a", "b" ] possibly across lines.
                     for mm in re.finditer(
                         r"\b" + prop + r"\s*:\s*\[(.*?)\]", block, re.S):
@@ -1191,11 +1202,14 @@ refstripped = 0
 # Properties whose list values are module-name refs (must match the harvest).
 # srcs/data/data_native_bins are excluded — they hold FILE refs, not module
 # names (see harvest comment above); stripping them empties source lists.
+# tool_files is likewise excluded — it holds FILE paths (scripts), not module
+# names; `tools` is the module-ref counterpart. Stripping a file ref from
+# tool_files would drop the genrule's script (run 30822768592 dots regression).
 DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              "export_header_libs", "whole_static_libs", "export_static_lib_headers",
              "export_shared_lib_headers",
              "defaults", "required", "optional_uses_libs",
-             "tools", "tool_files")
+             "tools")
 
 def strip_refs_from_block(block, bad):
     # Remove each bad name from dependency-property lists in this module block.
