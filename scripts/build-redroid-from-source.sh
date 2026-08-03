@@ -885,6 +885,7 @@ def parse_file(path):
             nm = re.search(r'\bname:\s*"([^"]+)"', block)
             if nm:
                 name = nm.group(1)
+                mtype = m.group(1)   # the block type (identifier before `{`)
                 # Collect refs only from module-dependency properties — NOT every
                 # quoted string. A naive "all quoted tokens" harvest misreads
                 # sdk_version "current", test_suites "cts", visibility "//…",
@@ -906,7 +907,8 @@ def parse_file(path):
                 refs.discard(name)
                 mods.append({"name": name, "path": path, "start": start,
                              "end": k, "block": block, "refs": refs,
-                             "orphan": False, "soong": is_soong(path)})
+                             "orphan": False, "soong": is_soong(path),
+                             "type": mtype})
             i = k
             while i < n and src[i] in "\r\n": i += 1
             continue
@@ -931,9 +933,25 @@ for dirpath, _, files in os.walk(root):
                         modules[md["name"]] = md
                     file_modules[p].append(md)
 
-# Seed orphan set. Two seeds (build/soong modules are NEVER seeded — they are
-# always present in the real build; seeding them would cascade to modules that
-# legitimately reference them):
+# Type-defining module types. These declare soong module TYPES, string
+# variables, or import targets — other Android.bp files depend on them by NAME
+# (as a module type) or by FILE PATH (soong_config_module_type_import `from:`),
+# NOT as a build dependency. Our dependency-ref model does not capture those,
+# so they must NEVER be orphaned, and a file containing one must NEVER be
+# dropped (only stripped of orphan non-type modules). Otherwise we drop e.g.
+# system/apex/Android.bp (defines library_linking_strategy_*_defaults types),
+# breaking packages/modules/adb which imports it:
+#   "unrecognized module type \"library_linking_strategy_apex_defaults\""
+#   "from: failed to open \"system/apex/Android.bp\""
+TYPE_DEFINING = frozenset((
+    "soong_config_module_type",
+    "soong_config_string_variable",
+    "soong_config_module_type_import",
+))
+
+# Seed orphan set. Two seeds (build/soong modules and type-defining modules are
+# NEVER seeded — build/soong is always present in the real build; type-defining
+# blocks are depended on by name/path, not as deps):
 # (a) modules whose body matches cts_syms (direct refs to removed cts/tradefed
 #     trees — the residual after the direct prunes).
 # (b) modules referencing a name NOT defined anywhere in the tree. This catches
@@ -948,7 +966,7 @@ for dirpath, _, files in os.walk(root):
 # orphaned.
 defined = set(modules.keys())
 for name, md in modules.items():
-    if md["soong"]:
+    if md["soong"] or md["type"] in TYPE_DEFINING:
         continue
     # (a) direct cts_syms body match.
     if not md["orphan"] and pat.search(md["block"]):
@@ -966,11 +984,12 @@ for name, md in modules.items():
 
 # Cascade orphan propagation to fixpoint: a module referencing an orphan name
 # is itself an orphan (handles cross-file chains like flickerlib -> ... ).
+# Type-defining modules never become orphans (skipped above + here).
 changed = True
 while changed:
     changed = False
     for name, md in modules.items():
-        if md["soong"] or md["orphan"]:
+        if md["soong"] or md["orphan"] or md["type"] in TYPE_DEFINING:
             continue
         if md["refs"] and (md["refs"] & {n for n, m in modules.items() if m["orphan"]}):
             md["orphan"] = True
