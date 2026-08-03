@@ -1105,6 +1105,29 @@ def is_aidl_generated(r):
             return True
     return False
 
+# java_sdk_library { name: "X" } auto-generates DOTTED child modules (X.stubs,
+# X.stubs.system, X.stubs.module_lib, X.stubs.test, ...) that other modules
+# reference as ordinary java lib deps (libs/static_libs). These generated
+# children are absent from `defined` (parser only records literally-declared
+# names). Now that the identifier filter below allows dots, we MUST recognize
+# them as defined — otherwise every consumer of X.stubs looks orphaned and
+# gets the dep ref-stripped, losing a real dep -> ninja under-link. This is the
+# dotted-name analogue of is_aidl_generated above. (Only relevant once dots were
+# admitted to the identifier filter, run 30809794224.)
+sdk_lib_names = {md["name"] for md in modules.values() if md["type"] == "java_sdk_library"}
+def is_sdk_lib_generated(r):
+    # r == a java_sdk_library name, or a dotted child soong generates from one
+    # (X.stubs, X.stubs.system, X.stubs.module_lib, X.stubs.test, ...). Also
+    # matches dotted-named interfaces (an == "android.os.foo" -> child
+    # "android.os.foo.stubs"). Generous on purpose: over-counting `defined`
+    # only leaves a ref in place (soong resolves it or reports "undefined
+    # module X" explicitly, a recoverable next-layer failure), whereas
+    # under-counting strips a real generated stubs dep and silently breaks.
+    for an in sdk_lib_names:
+        if r == an or r.startswith(an + "."):
+            return True
+    return False
+
 removed = set()        # names of test modules being REMOVED
 refstrip = {}          # name -> set(bad refs) for PRODUCTION modules (ref-stripped)
 
@@ -1112,11 +1135,21 @@ def bad_refs_for(md):
     # refs that are undefined anywhere OR point at a module being removed.
     bad = (md["refs"] - defined) | (md["refs"] & removed)
     # Filter out obvious non-module tokens (sdk_version "current", license
-    # kinds, …): a real module name is an identifier (letters/digits/_/-).
-    # Also NEVER flag aidl_interface-generated names (see is_aidl_generated):
-    # soong defines them even though they are not literally declared.
+    # kinds, …): a real module name is an identifier (letters/digits/_/-),
+    # and Java module names also use dots (android.car, com.google.foo, …).
+    # Allowing dots is necessary: run 30809794224 arm64 soong bootstrap failed
+    # because robolectric_android-all-device-deps referenced the removed Car
+    # tree's android.car / android.car.builtin, but the dot made the old
+    # [A-Za-z][A-Za-z0-9_-]* filter reject them -> never flagged as bad ->
+    # never ref-stripped -> "depends on undefined module android.car". Dotted
+    # refs that ARE defined stay in `defined` (names recorded verbatim) so are
+    # not flagged; only genuinely-absent dotted deps get ref-stripped.
+    # NEVER flag soong-auto-generated names — aidl_interface (is_aidl_generated)
+    # and java_sdk_library (is_sdk_lib_generated) define children that are not
+    # literally declared but that soong resolves; stripping them loses real deps.
     return {r for r in bad
-            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", r) and not is_aidl_generated(r)}
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*", r)
+            and not is_aidl_generated(r) and not is_sdk_lib_generated(r)}
 
 changed = True
 while changed:
