@@ -827,10 +827,28 @@ def is_test_like(d):
         r".*/javatests(/|$)", r".*/hostsidetests(/|$)", r".*/hostside(/|$)",
         r".*/[^/]*_test(/|$)", r".*TestCases(/|$)", r".*/xts(/|$)",
         r".*/sts-common-util(/|$)", r".*/benchmarks(/|$)", r".*/fuzz(/|$)",
+        # platform_testing/ holds flicker + compatibility test libs (flickerlib
+        # refs the direct-prune-stripped flickerlib-core -> dangling consumer).
+        r".*/platform_testing(/|$)",
     ]
     for p in pats:
         if _r.search(p, d): return True
     return False
+
+def is_test_name(name):
+    # soong test module naming conventions (CtsSkQPTestCases, foo_test, …).
+    import re as _r
+    pats = [
+        r"(^|_)(test|tests|gtest|ctest|fuzz|benchmark)s?(_|$)",
+        r"TestCases$", r"^Cts[A-Z]", r"^cts_", r"Test$",
+    ]
+    return any(_r.search(p, name) for p in pats)
+
+# A module is "test-like" (a test artifact that should be REMOVED, not kept)
+# if it lives in a test path, has a test module name, OR its body references
+# cts/tradefed harness symbols. Production modules are NEVER test-like.
+def test_like(md):
+    return is_test_like(md["path"]) or is_test_name(md["name"]) or bool(pat.search(md["block"]))
 
 # Collect modules: name -> {dir, path, start, end, refs(set), orphan(bool)}
 modules = {}            # name -> dict
@@ -949,75 +967,105 @@ TYPE_DEFINING = frozenset((
     "soong_config_module_type_import",
 ))
 
-# Seed orphan set. Two seeds (build/soong modules and type-defining modules are
-# NEVER seeded — build/soong is always present in the real build; type-defining
-# blocks are depended on by name/path, not as deps):
-# (a) modules whose body matches cts_syms (direct refs to removed cts/tradefed
-#     trees — the residual after the direct prunes).
-# (b) modules referencing a name NOT defined anywhere in the tree. This catches
-#     the dangling-consumer case: the direct prune already STRIPPED flickerlib-
-#     core/-helpers from the file, so no cts_syms match remains to seed (a);
-#     but flickerlib still references those (now-undefined) names -> seed (b)
-#     orphanes it. Also catches the original seed modules themselves (they ref
-#     the removed compat-device-util-axt etc., which are undefined here).
-# Known-good modules (present in tree — incl. build/soong-defined names, since
-# we walked build/soong) are NOT undefined, so a module referencing
-# libbase/libvintf/jsonlib (restored slivers) or a soong-defined default is not
-# orphaned.
+# Seed + cascade to fixpoint. A module with a "bad" ref — one that names a
+# module NOT defined anywhere in the tree (removed by a direct prune / dir
+# drop, or never synced) OR a module we are removing in this very pass — would
+# make soong analyze fail ("X depends on undefined module Y"). The fix is
+# branch on whether the module is a test artifact or production code:
+#   * TEST-like module  -> REMOVE it (and cascade to its referrers). Test
+#     modules aren't packaged by redroid, so dropping them is safe and matches
+#     the direct prunes. This is the flickerlib case: flickerlib (test) refs
+#     the direct-prune-stripped flickerlib-core -> removed.
+#   * PRODUCTION module -> STRIP THE DANGLING REF, keep the module buildable.
+#     Production daemons/libs (apexd, libverity_tree, libsigningutils, odsign)
+#     are needed at runtime; removing them would break boot. Crucially, keeping
+#     them DEFINED breaks the production false-orphan cascade: old behavior
+#     removed libverity_tree (it had one dangling ref) -> libverity_tree became
+#     undefined -> apexd (refs it) orphaned -> apexd's referrers orphaned, etc.
+#     Ref-stripping libverity_tree instead keeps it defined, so apexd is fine.
+# build/soong and type-defining modules are never touched (is_soong /
+# TYPE_DEFINING guards).
 defined = set(modules.keys())
-for name, md in modules.items():
-    if md["soong"] or md["type"] in TYPE_DEFINING:
-        continue
-    # (a) direct cts_syms body match.
-    if not md["orphan"] and pat.search(md["block"]):
-        md["orphan"] = True
-    if md["orphan"]:
-        continue
-    # (b) references an undefined module name.
-    undef_refs = md["refs"] - defined
-    # Filter out obvious non-module tokens (soong property values that aren't
-    # module refs — sdk_version "current", license kinds, etc.) heuristically:
-    # a real module name is an identifier (letters/digits/_/-). Keep only those.
-    undef_refs = {r for r in undef_refs if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", r)}
-    if undef_refs:
-        md["orphan"] = True
+removed = set()        # names of test modules being REMOVED
+refstrip = {}          # name -> set(bad refs) for PRODUCTION modules (ref-stripped)
 
-# Cascade orphan propagation to fixpoint: a module referencing an orphan name
-# is itself an orphan (handles cross-file chains like flickerlib -> ... ).
-# Type-defining modules never become orphans (skipped above + here).
+def bad_refs_for(md):
+    # refs that are undefined anywhere OR point at a module being removed.
+    bad = (md["refs"] - defined) | (md["refs"] & removed)
+    # Filter out obvious non-module tokens (sdk_version "current", license
+    # kinds, …): a real module name is an identifier (letters/digits/_/-).
+    return {r for r in bad if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", r)}
+
 changed = True
 while changed:
     changed = False
     for name, md in modules.items():
-        if md["soong"] or md["orphan"] or md["type"] in TYPE_DEFINING:
+        if md["soong"] or md["type"] in TYPE_DEFINING or name in removed:
             continue
-        if md["refs"] and (md["refs"] & {n for n, m in modules.items() if m["orphan"]}):
-            md["orphan"] = True
+        br = bad_refs_for(md)
+        if not br:
+            continue
+        if test_like(md):
+            removed.add(name)
+            changed = True
+        elif refstrip.get(name) != br:
+            # production module: record the dangling refs to strip, keep module.
+            refstrip[name] = br
             changed = True
 
 # Apply: NEVER rmtree a directory (that risked nuking sliver-restored trees —
 # e.g. the restored cts/Android.bp defines cts_defaults which matches cts_syms
 # -> all-orphan -> rmtree(cts/) would delete cts/libs/json/jsonlib). Dir-level
 # drops are already handled by the direct prunes. The cascade only ever:
-#  - drops an individual Android.bp whose modules are ALL orphan (no survivors),
-#    or
-#  - strips just the orphan modules from a file that still has survivors.
+#  - drops an individual Android.bp whose modules are ALL removed (no survivors),
+#  - strips just the removed (test) modules from a file with survivors, and/or
+#  - ref-strips dangling refs from production modules (kept buildable).
 import shutil
 dropped_files = 0
 stripped = 0
+refstripped = 0
+
+# Properties whose list values are module-name refs (must match the harvest).
+DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
+             "export_header_libs", "whole_static_libs", "export_static_lib_headers",
+             "defaults", "srcs", "data", "data_native_bins", "required",
+             "optional_uses_libs", "tools", "tool_files")
+
+def strip_refs_from_block(block, bad):
+    # Remove each bad name from dependency-property lists in this module block.
+    # Re-emits `prop: [ "a", "b" ]` (soong accepts the collapsed form). Empty
+    # lists become `prop: []` (also valid). \b before prop avoids matching
+    # whole_static_libs when processing static_libs, etc.
+    out = block
+    for prop in DEP_PROPS:
+        def repl(m):
+            inner = m.group(1)
+            items = qstr.findall(inner)
+            keep = [it for it in items if it not in bad]
+            if len(keep) == len(items):
+                return m.group(0)  # nothing to remove in this list
+            return prop + ": [" + ", ".join('"' + it + '"' for it in keep) + "]"
+        out = re.sub(r"\b" + prop + r"\s*:\s*\[(.*?)\]", repl, out, flags=re.S)
+    return out
+
 for p in list(file_modules):
-    if not os.path.exists(p):
+    if not os.path.exists(p) or is_soong(p):   # NEVER touch build/soong
         continue
-    if is_soong(p):       # NEVER drop/strip build/soong
+    fmods = file_modules[p]
+    rm_mods = [md for md in fmods if md["name"] in removed]
+    rs_mods = []   # (md, new_block) production modules to ref-strip
+    for md in fmods:
+        if md["name"] in removed or md["name"] not in refstrip:
+            continue
+        nb = strip_refs_from_block(md["block"], refstrip[md["name"]])
+        if nb != md["block"]:
+            rs_mods.append((md, nb))
+    if not rm_mods and not rs_mods:
         continue
-    orphan_mods = [md for md in file_modules[p] if md["orphan"]]
-    if not orphan_mods:
-        continue
-    all_orphan = all(md["orphan"] for md in file_modules[p]) and len(file_modules[p]) > 0
-    if all_orphan:
-        # Every module orphaned -> drop the file (no survivors). Leave the dir
-        # in place; sibling files/bps are handled on their own iteration, and
-        # dir-level rm is the direct prunes' job, not the cascade's.
+    survivors = [md for md in fmods if md["name"] not in removed]
+    if not survivors:
+        # Every module removed (no survivors, no production ref-strips) -> drop
+        # the file. Leave the dir in place; dir-level rm is the direct prunes' job.
         rel = os.path.relpath(p, root)
         print(f"[redroid-src]   drop {rel} (orphan cascade, all modules)")
         try:
@@ -1026,29 +1074,42 @@ for p in list(file_modules):
         except OSError:
             pass
         continue
-    # Strip orphan modules, keep survivors. Rewrite file with non-orphan blocks.
+    # Edit: remove rm_mods blocks + splice ref-stripped production blocks.
     try:
         src = open(p, encoding="utf-8", errors="replace").read()
     except OSError:
         continue
-    # Sort descending by offset so removals don't shift earlier offsets.
-    offs = sorted(((md["start"], md["end"]) for md in orphan_mods), reverse=True)
+    edits = [(md["start"], md["end"], None) for md in rm_mods]
+    edits += [(md["start"], md["end"], nb) for md, nb in rs_mods]
+    # Descending by offset so earlier edits' offsets stay valid.
+    edits.sort(key=lambda e: e[0], reverse=True)
     new = src
-    for s, e in offs:
-        # Extend end to swallow a trailing newline.
-        ee = e
-        if ee < len(new) and new[ee] == "\n": ee += 1
-        elif ee < len(new) and new[ee] == "\r":
-            ee += 1
+    for s, e, repl in edits:
+        if repl is None:
+            ee = e
             if ee < len(new) and new[ee] == "\n": ee += 1
-        new = new[:s] + new[ee:]
+            elif ee < len(new) and new[ee] == "\r":
+                ee += 1
+                if ee < len(new) and new[ee] == "\n": ee += 1
+            new = new[:s] + new[ee:]
+        else:
+            new = new[:s] + repl + new[e:]
     rel = os.path.relpath(p, root)
-    names = ",".join(md["name"] for md in orphan_mods)
-    print(f"[redroid-src]   strip {rel} (cascade removed: {names})")
+    parts = []
+    if rm_mods:
+        parts.append("removed: " + ",".join(md["name"] for md in rm_mods))
+    if rs_mods:
+        # Include the stripped ref names so the CI log shows exactly which
+        # dangling deps were cleaned from each production module.
+        parts.append("refstripped: " + ", ".join(
+            md["name"] + "[-" + ",".join(sorted(refstrip[md["name"]])) + "]"
+            for md, _ in rs_mods))
+    print(f"[redroid-src]   strip {rel} (cascade {'; '.join(parts)})")
     open(p, "w", encoding="utf-8").write(new)
     stripped += 1
+    refstripped += len(rs_mods)
 
-print(f"[redroid-src] cascade: dropped {dropped_files} file(s), stripped {stripped} file(s)")
+print(f"[redroid-src] cascade: dropped {dropped_files} file(s), stripped {stripped} file(s), refstripped {refstripped} prod module(s)")
 PY
 }
 
