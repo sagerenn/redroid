@@ -942,6 +942,7 @@ def parse_file(path):
                 for prop in ("static_libs", "shared_libs", "libs",
                              "header_libs", "export_header_libs",
                              "whole_static_libs", "export_static_lib_headers",
+                             "export_shared_lib_headers",
                              "defaults", "required", "optional_uses_libs",
                              "tools", "tool_files"):
                     # match prop: [ "a", "b" ] possibly across lines.
@@ -1058,6 +1059,35 @@ TYPE_DEFINING = frozenset((
 # build/soong and type-defining modules are never touched (is_soong /
 # TYPE_DEFINING guards).
 defined = set(modules.keys())
+
+# aidl_interface { name: "X" } auto-generates a family of cc/java/ndk/rust
+# library modules (X-aidl-cpp, X-aidl-java, X-aidl-ndk, X-aidl-rust; versioned
+# X-V<n>-cpp / X-V<n>-ndk / ...; plus -source variants) that other modules
+# reference as ordinary shared/header lib deps. Our parser only records
+# literally-declared module names, so these generated children are absent from
+# `defined` -> every production module referencing them looks orphaned and gets
+# ref-stripped, losing real deps AND breaking the export_shared_lib_headers /
+# shared_libs consistency soong enforces. Run 30800359809 arm64:
+#   frameworks/av/media/libshmem/Android.bp: "libshmemutil": export_shared_lib_headers:
+#   Shared library not in shared_libs: 'shared-file-region-aidl-cpp'
+# (libshmemutil/libaudioclient/libaaudio fuzzer/... all had shared-file-region-
+# aidl-cpp, aaudio-aidl-cpp, audioflinger-aidl-cpp, ... ref-stripped). Soong
+# DOES define these; treat any name that is (or is a hyphen-child of) a known
+# aidl_interface as defined so it is never ref-stripped. Generous on purpose:
+# over-counting `defined` only leaves a ref in place (soong then resolves it or
+# reports "undefined module X" explicitly, a recoverable next-layer failure),
+# whereas under-counting strips a real dep and silently breaks the build.
+aidl_names = {md["name"] for md in modules.values() if md["type"] == "aidl_interface"}
+def is_aidl_generated(r):
+    # r == an aidl_interface name, or a hyphen-suffixed child soong generates
+    # from one (X-aidl-cpp, X-V1-ndk-source, ...). Underscore-separator names
+    # like packagemanager_aidl-cpp are covered when the interface is itself
+    # named packagemanager_aidl (then r == X-... child).
+    for an in aidl_names:
+        if r == an or r.startswith(an + "-"):
+            return True
+    return False
+
 removed = set()        # names of test modules being REMOVED
 refstrip = {}          # name -> set(bad refs) for PRODUCTION modules (ref-stripped)
 
@@ -1066,7 +1096,10 @@ def bad_refs_for(md):
     bad = (md["refs"] - defined) | (md["refs"] & removed)
     # Filter out obvious non-module tokens (sdk_version "current", license
     # kinds, …): a real module name is an identifier (letters/digits/_/-).
-    return {r for r in bad if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", r)}
+    # Also NEVER flag aidl_interface-generated names (see is_aidl_generated):
+    # soong defines them even though they are not literally declared.
+    return {r for r in bad
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", r) and not is_aidl_generated(r)}
 
 changed = True
 while changed:
@@ -1102,6 +1135,7 @@ refstripped = 0
 # names (see harvest comment above); stripping them empties source lists.
 DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              "export_header_libs", "whole_static_libs", "export_static_lib_headers",
+             "export_shared_lib_headers",
              "defaults", "required", "optional_uses_libs",
              "tools", "tool_files")
 
