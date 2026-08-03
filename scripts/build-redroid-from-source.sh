@@ -1188,11 +1188,23 @@ def bad_refs_for(md):
     # never ref-stripped -> "depends on undefined module android.car". Dotted
     # refs that ARE defined stay in `defined` (names recorded verbatim) so are
     # not flagged; only genuinely-absent dotted deps get ref-stripped.
+    # The filter ALSO admits `@` and `+`: HIDL/AIDL HAL module names embed `@`
+    # (android.hardware.automotive.can@libnetdevice, android.hardware.foo@1.0)
+    # and C++ libs embed `+` (libnl++, libc++, libstdc++). Run 30835177601
+    # arm64 soong bootstrap failed because VtsHalNetlinkInterceptorV1_0Test
+    # (a VTS test, test_like) referenced the genuinely-absent
+    # android.hardware.automotive.can@libnetdevice + libnl++, but `@`/`+`
+    # made the [A-Za-z][A-Za-z0-9_.-]* filter reject them -> never flagged
+    # bad -> test not removed -> soong "depends on undefined module". Safe:
+    # only module-name properties are harvested (static_libs/shared_libs/…/
+    # instrumentation_for) — file-path props (srcs/data/tool_files) are NOT
+    # harvested, so admitting `@`/`+` can't admit a file-extension false ref;
+    # the `:module` form is still rejected by the colon (not in the class).
     # NEVER flag soong-auto-generated names — aidl_interface (is_aidl_generated)
     # and java_sdk_library (is_sdk_lib_generated) define children that are not
     # literally declared but that soong resolves; stripping them loses real deps.
     return {r for r in bad
-            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*", r)
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.+@-]*", r)
             and not is_aidl_generated(r) and not is_sdk_lib_generated(r)}
 
 changed = True
