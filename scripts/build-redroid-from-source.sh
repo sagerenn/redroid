@@ -853,6 +853,23 @@ def is_test_like(d):
 def is_test_name(name):
     # soong test module naming conventions (CtsSkQPTestCases, foo_test, …).
     import re as _r
+    # SDK stubs libraries (android_stubs_current, android_system_stubs_current,
+    # android_test_stubs_current, android_module_lib_stubs_current, and the
+    # broader <name>_stubs / <name>_stubs_current family) are PRODUCTION
+    # java_sdk_library/droidstubs modules that ship the stubs for each API
+    # scope. Their names embed "test" only because the *test* API surface is
+    # one of those scopes — they are NOT tests. Without this guard the
+    # `(^|_)(test|...)(_|$)` pattern below matches `_test_` in
+    # android_test_stubs_current, so the cascade REMOVES it (run 30805587652:
+    # frameworks/base/StubLibraries.bp cascade-removed android_test_stubs_current;
+    # its siblings android_stubs_current / android_system_stubs_current were
+    # correctly ref-stripped+kept) and ~16 production java_sdk_library
+    # `.stubs.test` variants then fail with "depends on undefined module
+    # android_test_stubs_current". Excluding the stubs family lets them take
+    # production (ref-strip, keep) treatment and stay defined for dependents.
+    # (Generated .stubs.test children use dots, not _stubs, so are unaffected.)
+    if _r.search(r"_stubs(_current|_system|_module_lib)?(_|$)", name):
+        return False
     pats = [
         r"(^|_)(test|tests|gtest|ctest|fuzz|benchmark)s?(_|$)",
         r"TestCases$", r"^Cts[A-Z]", r"^cts_", r"Test$",
