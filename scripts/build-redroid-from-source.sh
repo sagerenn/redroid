@@ -999,6 +999,11 @@ def build_listed(src):
 
 bp_files = []
 seen_files = set()
+# p -> list of raw `build = [...]` entries, for EVERY file the BFS reads
+# (including build-only files with no modules, which register_bp skips). Used
+# by the post-apply pass to strip dangling build-list entries pointing at files
+# the cascade dropped (see "build-list strip" pass below).
+build_directives = {}
 def register_bp(p):
     if p in seen_files:
         return
@@ -1034,7 +1039,10 @@ while i < len(queue):
     except OSError:
         continue
     d = os.path.dirname(p)
-    for f in build_listed(src):
+    bl = build_listed(src)
+    if bl:
+        build_directives[p] = bl
+    for f in bl:
         if not f.endswith(".bp"):
             continue
         ep = os.path.normpath(os.path.join(d, f))
@@ -1267,7 +1275,53 @@ for p in list(file_modules):
     stripped += 1
     refstripped += len(rs_mods)
 
-print(f"[redroid-src] cascade: dropped {dropped_files} file(s), stripped {stripped} file(s), refstripped {refstripped} prod module(s)")
+# build-list strip: a `.bp` file the cascade DROPPED (all modules removed) may
+# still be named in a KEPT file's top-level `build = [...]` directive. That
+# directive is a FILE-LEVEL include (note `=`, not the `:` of module props), so
+# the module-level strip/drop above does not touch it -> soong then tries to
+# load the deleted file and hard-fails:
+#   error: <parent>:LINE: "<dropped>.bp": not found
+# Run 30816567034 arm64: the cascade dropped art/test/Android.run-test.bp (all
+# its run-test java_genrule modules removed after art-run-test-data-defaults
+# was stripped from the sibling art/test/Android.bp) but art/test/Android.bp
+# still carried `build = ["Android.run-test.bp"]` -> soong "not found". Strip
+# the dangling entry from every kept file's `build` array; drop the whole
+# directive if it empties. Targets are resolved relative to the containing
+# file's dir (same as the BFS); a target absent for ANY reason (dropped by us
+# or never synced) is stripped, since soong would hard-fail on it regardless.
+build_stripped = 0
+for p, _entries in build_directives.items():
+    if is_soong(p) or not os.path.isfile(p):   # NEVER touch build/soong; skip already-dropped
+        continue
+    try:
+        src = open(p, encoding="utf-8", errors="replace").read()
+    except OSError:
+        continue
+    d = os.path.dirname(p)
+    removed_entries = []
+    def repl_build(m):
+        inner = m.group(1)
+        items = qstr.findall(inner)
+        keep = []
+        for it in items:
+            if os.path.isfile(os.path.normpath(os.path.join(d, it))):
+                keep.append(it)
+            else:
+                removed_entries.append(it)
+        if not removed_entries:
+            return m.group(0)            # nothing dangling in this array
+        if not keep:
+            return ""                    # all entries dangling -> drop whole directive
+        return "build = [" + ", ".join('"' + it + '"' for it in keep) + "]"
+    new = re.sub(r"^[ \t]*build[ \t]*=[ \t]*\[(.*?)\]", repl_build,
+                 src, flags=re.S | re.M)
+    if new != src:
+        open(p, "w", encoding="utf-8").write(new)
+        rel = os.path.relpath(p, root)
+        print(f"[redroid-src]   strip build-list {rel} (removed: {','.join(removed_entries)})")
+        build_stripped += 1
+
+print(f"[redroid-src] cascade: dropped {dropped_files} file(s), stripped {stripped} file(s), refstripped {refstripped} prod module(s), build-list stripped {build_stripped} file(s)")
 PY
 }
 
