@@ -895,6 +895,18 @@ excluded_walk = lambda p: ("/.repo/" in p or p.startswith(root + "/.repo") or
                            "/.tmp/" in p)
 is_soong = lambda p: "/build/soong" in p
 
+# Single-value module-name properties (NOT a list, NOT a file path). These name
+# a module directly — `instrumentation_for: "AppName"` names the app a test
+# instruments. Harvest so a test referencing an absent app is detected and
+# removed. Run 30829841453 arm64: MoblySnippetHelperRoboTest referenced the
+# genuinely-absent NearbyMultiDevicesClientsSnippets via instrumentation_for ->
+# not harvested (list-form only) -> test not removed -> soong "depends on
+# undefined module". MUST be defined before the BFS below (parse_file harvests
+# it during the walk, unlike DEP_PROPS which is only used in the apply phase).
+# Only module-name (never file) props go here; the identifier filter in step 4
+# still applies. Stripping a bad single ref drops the whole `prop: "bad"` line.
+SINGLE_MODULE_REF_PROPS = ("instrumentation_for",)
+
 def parse_file(path):
     try:
         src = open(path, encoding="utf-8", errors="replace").read()
@@ -977,6 +989,19 @@ def parse_file(path):
                     for mm in re.finditer(
                         r"\b" + prop + r"\s*:\s*\[(.*?)\]", block, re.S):
                         refs |= set(qstr.findall(mm.group(1)))
+                # SINGLE-VALUE module-name properties (not a list, not a file
+                # path). `instrumentation_for: "AppName"` names the app a test
+                # instruments — a module ref. Harvest so a test referencing an
+                # absent app is detected and removed. Run 30829841453 arm64:
+                # MoblySnippetHelperRoboTest referenced the genuinely-absent
+                # NearbyMultiDevicesClientsSnippets via instrumentation_for ->
+                # not harvested (list-form only) -> test not removed -> soong
+                # "depends on undefined module". Only module-name (never file)
+                # props go here; the identifier filter in step 4 still applies.
+                for prop in SINGLE_MODULE_REF_PROPS:
+                    mm = re.search(r"\b" + prop + r"\s*:\s*\"([^\"]+)\"", block)
+                    if mm:
+                        refs.add(mm.group(1))
                 refs.discard(name)
                 mods.append({"name": name, "path": path, "start": start,
                              "end": k, "block": block, "refs": refs,
@@ -1211,6 +1236,11 @@ DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              "defaults", "required", "optional_uses_libs",
              "tools")
 
+# Single-value module-ref props are defined near parse_file (they're harvested
+# during the BFS walk, before this apply-phase helper runs); see
+# SINGLE_MODULE_REF_PROPS above. strip_refs_from_block drops the whole
+# `prop: "bad"` line for each bad single ref.
+
 def strip_refs_from_block(block, bad):
     # Remove each bad name from dependency-property lists in this module block.
     # Re-emits `prop: [ "a", "b" ]` (soong accepts the collapsed form). Empty
@@ -1226,6 +1256,13 @@ def strip_refs_from_block(block, bad):
                 return m.group(0)  # nothing to remove in this list
             return prop + ": [" + ", ".join('"' + it + '"' for it in keep) + "]"
         out = re.sub(r"\b" + prop + r"\s*:\s*\[(.*?)\]", repl, out, flags=re.S)
+    # Single-value module-ref props: drop the whole `prop: "bad",` line.
+    for prop in SINGLE_MODULE_REF_PROPS:
+        def repl1(m):
+            return "" if m.group(1) in bad else m.group(0)
+        out = re.sub(
+            r"^[ \t]*\b" + prop + r"\s*:\s*\"([^\"]+)\"\s*,?[ \t]*\n",
+            repl1, out, flags=re.M)
     return out
 
 for p in list(file_modules):
