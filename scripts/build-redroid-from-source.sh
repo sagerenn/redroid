@@ -942,10 +942,48 @@ is_soong = lambda p: "/build/soong" in p
 # genuinely-absent NearbyMultiDevicesClientsSnippets via instrumentation_for ->
 # not harvested (list-form only) -> test not removed -> soong "depends on
 # undefined module". MUST be defined before the BFS below (parse_file harvests
-# it during the walk, unlike DEP_PROPS which is only used in the apply phase).
-# Only module-name (never file) props go here; the identifier filter in step 4
-# still applies. Stripping a bad single ref drops the whole `prop: "bad"` line.
+# it during the walk). Only module-name (never file) props go here; the
+# identifier filter in step 4 still applies. Stripping a bad single ref drops
+# the whole `prop: "bad"` line.
 SINGLE_MODULE_REF_PROPS = ("instrumentation_for",)
+
+# List-valued module-name dependency properties. SINGLE SOURCE OF TRUTH: used by
+# BOTH parse_file's harvest (seeds/cascade detection during the BFS walk) AND
+# strip_refs_from_block (the apply-phase re-emit). The two MUST stay in sync —
+# a prop harvested but not stripped leaves a dangling ref in a re-emitted list;
+# a prop stripped but not harvested is never seeded so never stripped (run
+# 30851061439 arm64: `deps` was in neither until this consolidation — microdroid
+# android_system_image's deps:["tombstone_transmit.microdroid"] was invisible to
+# the cascade -> soong "depends on undefined module"). Hence defined here,
+# before parse_file, and referenced by name in both phases (no duplication).
+# srcs/data/data_native_bins are excluded — FILE refs, not module names
+# (stripping them empties source lists; see harvest comment in parse_file).
+# tool_files excluded — FILE paths (scripts); `tools` is the module-ref
+# counterpart (run 30822768592 dots regression).
+DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
+             "export_header_libs", "whole_static_libs", "export_static_lib_headers",
+             "export_shared_lib_headers",
+             "defaults", "required", "optional_uses_libs",
+             "tools",
+             # `deps` is Blueprint's built-in common module-dep property (the
+             # `Deps []string` field + depsMutator) — ALWAYS a list of module
+             # names, validated by soong as such. Image/prebuilt module types
+             # (android_system_image, prebuilt_*, …) declare their module deps
+             # via `deps:` (NOT static_libs/shared_libs). Without harvesting it,
+             # a production image module referencing a genuinely-absent dep
+             # (run 30851061439 arm64: microdroid android_system_image's
+             # deps:["tombstone_transmit.microdroid"] — that prebuilt's defining
+             # project is remove-project'd by redroid, but siblings
+             # diced.microdroid/servicemanager.microdroid are kept) was invisible
+             # to the cascade -> never ref-stripped -> soong "depends on undefined
+             # module". Same safety class as `required`: soong validates every
+             # `deps` entry as a module ref, so a present-but-file-shaped name
+             # (e.g. microdroid's "cgroups.json"/"public.libraries.android.txt")
+             # is a real module in `defined` -> never stripped. `+`-concatenated
+             # list tails (deps:[...] + microdroid_shell_and_utilities) are safe:
+             # strip_refs_from_block's regex matches only the `[...]` literal,
+             # leaving the `+ var` tail intact.
+             "deps")
 
 def parse_file(path):
     try:
@@ -1019,12 +1057,7 @@ def parse_file(path):
                 # ref-stripped (losing the script). tool_files' `:module` form is
                 # already rejected by the colon in the identifier filter, so
                 # excluding the bare file-path form costs no real dep coverage.
-                for prop in ("static_libs", "shared_libs", "libs",
-                             "header_libs", "export_header_libs",
-                             "whole_static_libs", "export_static_lib_headers",
-                             "export_shared_lib_headers",
-                             "defaults", "required", "optional_uses_libs",
-                             "tools"):
+                for prop in DEP_PROPS:
                     # match prop: [ "a", "b" ] possibly across lines. Strip
                     # comments first so quoted text in a // or /* */ comment
                     # inside the list is not harvested as a module ref (see
@@ -1282,18 +1315,9 @@ dropped_files = 0
 stripped = 0
 refstripped = 0
 
-# Properties whose list values are module-name refs (must match the harvest).
-# srcs/data/data_native_bins are excluded — they hold FILE refs, not module
-# names (see harvest comment above); stripping them empties source lists.
-# tool_files is likewise excluded — it holds FILE paths (scripts), not module
-# names; `tools` is the module-ref counterpart. Stripping a file ref from
-# tool_files would drop the genrule's script (run 30822768592 dots regression).
-DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
-             "export_header_libs", "whole_static_libs", "export_static_lib_headers",
-             "export_shared_lib_headers",
-             "defaults", "required", "optional_uses_libs",
-             "tools")
-
+# Properties whose list values are module-name refs — DEP_PROPS, defined above
+# before parse_file (single source of truth: harvested during the BFS walk AND
+# re-emitted here). srcs/data/data_native_bins/tool_files excluded (FILE refs).
 # Single-value module-ref props are defined near parse_file (they're harvested
 # during the BFS walk, before this apply-phase helper runs); see
 # SINGLE_MODULE_REF_PROPS above. strip_refs_from_block drops the whole
