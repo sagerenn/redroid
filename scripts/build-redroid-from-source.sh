@@ -197,7 +197,22 @@ sync_tree() {
 
   echo "[redroid-src] applying redroid patches"
   patches_dir=$(mktemp -d)
-  git clone --depth 1 https://github.com/remote-android/redroid-patches.git "$patches_dir"
+  # Clone the patch set with retry: github can return transient HTTP 503/502
+  # during ref listing (observed run 30796342633: "RPC failed; HTTP 503 /
+  # expected flush after ref listing"), which under set -e aborts the whole
+  # ~1.5h build at the very last post-sync step. Mirror the repo-sync retry.
+  for attempt in 1 2 3 4; do
+    rm -rf "${patches_dir:?}/"*
+    if git clone --depth 1 https://github.com/remote-android/redroid-patches.git "$patches_dir"; then
+      break
+    fi
+    if [[ $attempt -eq 4 ]]; then
+      echo "[redroid-src] ERROR: redroid-patches clone failed after 4 attempts" >&2
+      exit 1
+    fi
+    echo "[redroid-src] redroid-patches clone attempt ${attempt}/4 failed; retrying..." >&2
+    sleep $((attempt * 10))
+  done
   # Prefer xmllint; fall back to sed if missing
   if ! command -v xmllint >/dev/null 2>&1; then
     sudo apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libxml2-utils || true
