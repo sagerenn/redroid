@@ -910,13 +910,24 @@ def parse_file(path):
                 # license kinds etc. as module refs, falsely orphaning modules.
                 # These properties hold module-name references:
                 refs = set()
-                # Concrete soong dependency properties only (no wildcards: a
-                # greedy .* with re.S could span a // comment and harvest junk).
+                # Concrete soong MODULE-DEPENDENCY properties only (no wildcards:
+                # a greedy .* with re.S could span a // comment and harvest junk).
+                # srcs / data / data_native_bins are intentionally NOT harvested:
+                # they hold FILE references (e.g. "NOTICE", "VERSION", "foo.cpp"),
+                # never bare module names — module refs in srcs use the ":name"
+                # form, which the identifier filter below already excludes from
+                # bad-refs anyway. Harvesting them flagged every filegroup/genrule
+                # whose srcs listed a file (always "undefined") as an orphan ->
+                # ref-stripped, emptying its sources (b28b555: libcrypto lost its
+                # srcs via a build-list `defaults`, and libc_musl_version.h /
+                # icu_license / openwrt_license_files lost VERSION/NOTICE/LICENSE
+                # -> would break the genrule/ninja link). Soong analyze never
+                # validates srcs FILE existence (that is ninja's job), so dropping
+                # them from the harvest costs no soong-analyze coverage.
                 for prop in ("static_libs", "shared_libs", "libs",
                              "header_libs", "export_header_libs",
                              "whole_static_libs", "export_static_lib_headers",
-                             "defaults", "srcs", "data", "data_native_bins",
-                             "required", "optional_uses_libs",
+                             "defaults", "required", "optional_uses_libs",
                              "tools", "tool_files"):
                     # match prop: [ "a", "b" ] possibly across lines.
                     for mm in re.finditer(
@@ -933,7 +944,46 @@ def parse_file(path):
         i += 1
     return mods
 
+# Blueprint `build = [ "Other.bp", ... ]` is a TOP-LEVEL directive (note `=`,
+# not the `:` used inside module blocks) in an Android.bp that names additional
+# .bp files in the SAME directory for soong to parse. Soong does NOT glob *.bp —
+# it reads Android.bp plus only the files a `build` array lists. Missing this is
+# why a java_defaults defined in a non-Android.bp file was invisible to us:
+# packages/modules/common/sdk/ModuleDefaults.bp defines framework-module-defaults
+# (loaded via `build = ["ModuleDefaults.bp"]` in the sibling Android.bp). That
+# default carries the scope config suppressing the `test` API surface for the
+# framework-* java_sdk_library modules. With it absent from `defined`, the cascade
+# treated the `defaults` ref as orphaned and ref-stripped it from
+# framework-permission -> test surface required -> test-current.txt missing ->
+# soong bootstrap failed (run 30788927758, b28b555). `defaults` is a
+# CONFIG-bearing property, not a pure dep, so ref-stripping it is unsound anyway;
+# the real fix is making the default visible (defined) so it is never stripped.
+def build_listed(src):
+    out = []
+    for mm in re.finditer(r"^[ \t]*build[ \t]*=[ \t]*\[(.*?)\]", src, re.S | re.M):
+        out += qstr.findall(mm.group(1))
+    return out
+
 bp_files = []
+seen_files = set()
+def register_bp(p):
+    if p in seen_files:
+        return
+    seen_files.add(p)
+    mods = parse_file(p)
+    if not mods:
+        return
+    bp_files.append(p)
+    file_modules.setdefault(p, [])
+    for md in mods:
+        # first definition wins on name collisions (soong errors on dup anyway)
+        if md["name"] not in modules:
+            modules[md["name"]] = md
+        file_modules[p].append(md)
+
+# BFS: every Android.bp, then same-dir .bp files named by a top-level `build`
+# directive (and their `build` lists, transitively). Mirrors soong discovery.
+queue = []
 for dirpath, _, files in os.walk(root):
     if excluded_walk(dirpath + "/"):
         continue
@@ -941,15 +991,22 @@ for dirpath, _, files in os.walk(root):
         if fn == "Android.bp":
             p = os.path.join(dirpath, fn)
             if excluded_walk(p): continue
-            mods = parse_file(p)
-            if mods:
-                bp_files.append(p)
-                file_modules.setdefault(p, [])
-                for md in mods:
-                    # first definition wins on name collisions (soong errors on dup anyway)
-                    if md["name"] not in modules:
-                        modules[md["name"]] = md
-                    file_modules[p].append(md)
+            queue.append(p)
+i = 0
+while i < len(queue):
+    p = queue[i]; i += 1
+    register_bp(p)
+    try:
+        src = open(p, encoding="utf-8", errors="replace").read()
+    except OSError:
+        continue
+    d = os.path.dirname(p)
+    for f in build_listed(src):
+        if not f.endswith(".bp"):
+            continue
+        ep = os.path.normpath(os.path.join(d, f))
+        if ep not in seen_files and not excluded_walk(ep) and os.path.isfile(ep):
+            queue.append(ep)
 
 # Type-defining module types. These declare soong module TYPES, string
 # variables, or import targets — other Android.bp files depend on them by NAME
@@ -1026,10 +1083,12 @@ stripped = 0
 refstripped = 0
 
 # Properties whose list values are module-name refs (must match the harvest).
+# srcs/data/data_native_bins are excluded — they hold FILE refs, not module
+# names (see harvest comment above); stripping them empties source lists.
 DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              "export_header_libs", "whole_static_libs", "export_static_lib_headers",
-             "defaults", "srcs", "data", "data_native_bins", "required",
-             "optional_uses_libs", "tools", "tool_files")
+             "defaults", "required", "optional_uses_libs",
+             "tools", "tool_files")
 
 def strip_refs_from_block(block, bad):
     # Remove each bad name from dependency-property lists in this module block.
