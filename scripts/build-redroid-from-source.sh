@@ -835,9 +835,15 @@ def is_test_like(d):
 # Collect modules: name -> {dir, path, start, end, refs(set), orphan(bool)}
 modules = {}            # name -> dict
 file_modules = {}        # path -> list of module dicts (with raw block text + offsets)
-excluded = lambda p: ("/.repo/" in p or p.startswith(root + "/.repo") or
-                      "/out/" in p or p.startswith(root + "/out") or
-                      "/.tmp/" in p or "/build/soong" in p)
+# Walk excludes only non-source trees (.repo metadata, out build output, .tmp
+# workdir). build/soong is REAL source: we DO walk it so its module names count
+# as "defined" (preventing false orphaning of modules that reference them — soong
+# parses build/soong and never errors on those refs, so neither must we), but we
+# NEVER seed/cascade/drop build/soong modules (is_soong guards in every phase).
+excluded_walk = lambda p: ("/.repo/" in p or p.startswith(root + "/.repo") or
+                           "/out/" in p or p.startswith(root + "/out") or
+                           "/.tmp/" in p)
+is_soong = lambda p: "/build/soong" in p
 
 def parse_file(path):
     try:
@@ -879,11 +885,28 @@ def parse_file(path):
             nm = re.search(r'\bname:\s*"([^"]+)"', block)
             if nm:
                 name = nm.group(1)
-                refs = set(qstr.findall(block))
+                # Collect refs only from module-dependency properties — NOT every
+                # quoted string. A naive "all quoted tokens" harvest misreads
+                # sdk_version "current", test_suites "cts", visibility "//…",
+                # license kinds etc. as module refs, falsely orphaning modules.
+                # These properties hold module-name references:
+                refs = set()
+                # Concrete soong dependency properties only (no wildcards: a
+                # greedy .* with re.S could span a // comment and harvest junk).
+                for prop in ("static_libs", "shared_libs", "libs",
+                             "header_libs", "export_header_libs",
+                             "whole_static_libs", "export_static_lib_headers",
+                             "defaults", "srcs", "data", "data_native_bins",
+                             "required", "optional_uses_libs",
+                             "tools", "tool_files"):
+                    # match prop: [ "a", "b" ] possibly across lines.
+                    for mm in re.finditer(
+                        r"\b" + prop + r"\s*:\s*\[(.*?)\]", block, re.S):
+                        refs |= set(qstr.findall(mm.group(1)))
                 refs.discard(name)
                 mods.append({"name": name, "path": path, "start": start,
                              "end": k, "block": block, "refs": refs,
-                             "orphan": bool(pat.search(block))})
+                             "orphan": False, "soong": is_soong(path)})
             i = k
             while i < n and src[i] in "\r\n": i += 1
             continue
@@ -892,12 +915,12 @@ def parse_file(path):
 
 bp_files = []
 for dirpath, _, files in os.walk(root):
-    if excluded(dirpath + "/"):
+    if excluded_walk(dirpath + "/"):
         continue
     for fn in files:
         if fn == "Android.bp":
             p = os.path.join(dirpath, fn)
-            if excluded(p): continue
+            if excluded_walk(p): continue
             mods = parse_file(p)
             if mods:
                 bp_files.append(p)
@@ -908,12 +931,46 @@ for dirpath, _, files in os.walk(root):
                         modules[md["name"]] = md
                     file_modules[p].append(md)
 
-# Cascade orphan propagation to fixpoint.
+# Seed orphan set. Two seeds (build/soong modules are NEVER seeded — they are
+# always present in the real build; seeding them would cascade to modules that
+# legitimately reference them):
+# (a) modules whose body matches cts_syms (direct refs to removed cts/tradefed
+#     trees — the residual after the direct prunes).
+# (b) modules referencing a name NOT defined anywhere in the tree. This catches
+#     the dangling-consumer case: the direct prune already STRIPPED flickerlib-
+#     core/-helpers from the file, so no cts_syms match remains to seed (a);
+#     but flickerlib still references those (now-undefined) names -> seed (b)
+#     orphanes it. Also catches the original seed modules themselves (they ref
+#     the removed compat-device-util-axt etc., which are undefined here).
+# Known-good modules (present in tree — incl. build/soong-defined names, since
+# we walked build/soong) are NOT undefined, so a module referencing
+# libbase/libvintf/jsonlib (restored slivers) or a soong-defined default is not
+# orphaned.
+defined = set(modules.keys())
+for name, md in modules.items():
+    if md["soong"]:
+        continue
+    # (a) direct cts_syms body match.
+    if not md["orphan"] and pat.search(md["block"]):
+        md["orphan"] = True
+    if md["orphan"]:
+        continue
+    # (b) references an undefined module name.
+    undef_refs = md["refs"] - defined
+    # Filter out obvious non-module tokens (soong property values that aren't
+    # module refs — sdk_version "current", license kinds, etc.) heuristically:
+    # a real module name is an identifier (letters/digits/_/-). Keep only those.
+    undef_refs = {r for r in undef_refs if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", r)}
+    if undef_refs:
+        md["orphan"] = True
+
+# Cascade orphan propagation to fixpoint: a module referencing an orphan name
+# is itself an orphan (handles cross-file chains like flickerlib -> ... ).
 changed = True
 while changed:
     changed = False
     for name, md in modules.items():
-        if md["orphan"]:
+        if md["soong"] or md["orphan"]:
             continue
         if md["refs"] and (md["refs"] & {n for n, m in modules.items() if m["orphan"]}):
             md["orphan"] = True
@@ -931,6 +988,8 @@ dropped_files = 0
 stripped = 0
 for p in list(file_modules):
     if not os.path.exists(p):
+        continue
+    if is_soong(p):       # NEVER drop/strip build/soong
         continue
     orphan_mods = [md for md in file_modules[p] if md["orphan"]]
     if not orphan_mods:
