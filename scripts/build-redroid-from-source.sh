@@ -985,11 +985,56 @@ DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              # leaving the `+ var` tail intact.
              "deps")
 
+# A soong string-concat expression token: a double-quoted string literal OR a
+# bare identifier (a soong variable). Used by eval_soong_str + the `:`-ref
+# concat harvest below.
+_SOONG_TOK = r'"(?:[^"\\]|\\.)*"|[A-Za-z_][A-Za-z0-9_]*'
+
+def eval_soong_str(expr, svars):
+    # Resolve a soong string-concat expression — a sequence of string-literal and
+    # identifier tokens joined by `+`, e.g. ":" + kernel_stem + "-arm64" — to the
+    # final string, or None if it is not a PURE string-concat (uses a function,
+    # a list literal, or an unknown/unresolved variable). Soong evaluates these
+    # at parse time; we mirror that so `:`-module-output refs built by concat
+    # (src: ":" + kernel_stem + "-arm64") can be resolved to their final module
+    # name and harvested. Only string-concat is handled; anything else -> None
+    # (left unresolved, a recoverable next-layer soong error if it matters).
+    if not re.fullmatch(rf"\s*(?:{_SOONG_TOK})(?:\s*\+\s*(?:{_SOONG_TOK}))*\s*",
+                        expr):
+        return None
+    out = ""
+    for tm in re.finditer(_SOONG_TOK, expr):
+        t = tm.group(0)
+        if t.startswith('"'):
+            out += t[1:-1]   # strip quotes; escapes left as-is (kernel names have none)
+        else:
+            v = svars.get(t)
+            if v is None:
+                return None
+            out += v
+    return out
+
 def parse_file(path):
     try:
         src = open(path, encoding="utf-8", errors="replace").read()
     except OSError:
         return None
+    # File-scope soong string variables: `ident = "lit" + ident2 + "lit"` at
+    # column 0 (Blueprint variables are file-local; module properties are
+    # indented and use `:` not `=`, so the `^ident\s*=` line-anchored match only
+    # hits top-level assignments). Resolved so the `:`-module-output ref harvest
+    # can evaluate concat refs like
+    #   src: ":" + kernel_stem + "-arm64"     (kernel_stem = "kernel_prebuilts-" + kernel_version)
+    # to the final module name. Built in file order so a var may reference an
+    # earlier one. Only pure string-concat assignments resolve; the rest yield
+    # None and are skipped (harmless: an unresolved var makes any concat expr
+    # using it return None -> that `:`-ref is simply not harvested -> soong would
+    # then report it explicitly if it is genuinely absent, a recoverable layer).
+    soong_vars = {}
+    for am in re.finditer(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$", src, re.M):
+        val = eval_soong_str(am.group(2), soong_vars)
+        if val is not None:
+            soong_vars[am.group(1)] = val
     mods = []
     n = len(src); i = 0
     while i < n:
@@ -1081,6 +1126,38 @@ def parse_file(path):
                     mm = re.search(r"\b" + prop + r"\s*:\s*\"([^\"]+)\"", block)
                     if mm:
                         refs.add(mm.group(1))
+                # `:`-prefixed module-output refs. Soong treats `:name` as a
+                # module-output dependency ANYWHERE it appears in a path-typed
+                # property (srcs/src/data/tool_files/kernel_prebuilt/bootconfig/
+                # avb_private_key/...), EVEN in props the DEP_PROPS harvest above
+                # deliberately skips (srcs/src hold FILE refs for non-`:` entries
+                # — but a `:name` entry is NEVER a file path, it is a module ref).
+                # When the named module is absent (redroid prunes the
+                # kernel-prebuilts projects), soong errors
+                # "X depends on undefined module Y". Harvest so test consumers are
+                # REMOVED and production consumers ref-stripped. Two forms:
+                #   (a) literal  srcs: [":name"]  /  src: ":name"
+                #   (b) concat   src: ":" + kernel_stem + "-arm64"
+                # soong evaluates (b)'s variables at parse time; we resolve them
+                # via soong_vars (file-scope string assignments, built above) so
+                # the final module name is visible. Run 30857634964 arm64:
+                #   virt_test_kernel (test) (b) -> absent kernel_prebuilts-5.10-arm64
+                #   microdroid_kernel_modules (prod) (a) -> absent
+                #     virt_device_prebuilts_kernel_modules_microdroid-5.10-arm64
+                # Only module-name-shaped `:name` (identifier charset, matching
+                # the bad_refs_for filter) is harvested, so ":/path/to/x" /
+                # "://visibility:public" are not mistaken for module refs.
+                nocmt = strip_comments(block)
+                for cm in re.finditer(r'"(:[A-Za-z0-9_.+@-]+)"', nocmt):
+                    refs.add(cm.group(1)[1:])
+                # (b) `+`-concat expressions (2+ string-literal/ident tokens)
+                #     evaluating to a ":..." string.
+                for cm in re.finditer(
+                        r"(?:" + _SOONG_TOK + r")(?:\s*\+\s*(?:" + _SOONG_TOK + r"))+",
+                        nocmt):
+                    val = eval_soong_str(cm.group(0), soong_vars)
+                    if val and val.startswith(":"):
+                        refs.add(val[1:])
                 refs.discard(name)
                 mods.append({"name": name, "path": path, "start": start,
                              "end": k, "block": block, "refs": refs,
@@ -1347,6 +1424,35 @@ def strip_refs_from_block(block, bad):
         out = re.sub(
             r"^[ \t]*\b" + prop + r"\s*:\s*\"([^\"]+)\"\s*,?[ \t]*\n",
             repl1, out, flags=re.M)
+    # `:`-module-output refs in file-ref lists (srcs/data/tool_files/...). Soong
+    # validates `:name` as a module dep even in srcs (a `:name` entry is a module
+    # ref, never a file path); a bad `:name` (absent module) must be dropped or
+    # soong errors "depends on undefined module". Only `:`-prefixed entries are
+    # touched — file paths never start with `:`, and DEP_PROPS bare-name lists
+    # have no `:` prefix, so this pass is disjoint from the DEP_PROPS loop above
+    # (a DEP_PROPS list with a `:name` entry is correctly handled here too).
+    # Run 30857634964 arm64: microdroid_kernel_modules (prebuilt_kernel_modules,
+    # prod) srcs:[":virt_device_..._microdroid-5.10-arm64"] -> srcs:[].
+    def _strip_colon_list(m):
+        prop = m.group(1)
+        inner = strip_comments(m.group(2))
+        items = qstr.findall(inner)
+        keep = [it for it in items
+                if it and not (it.startswith(":") and it[1:] in bad)]
+        if len(keep) == len(items):
+            return m.group(0)   # no bad `:name` entry -> leave untouched
+        return prop + ": [" + ", ".join('"' + it + '"' for it in keep) + "]"
+    out = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*\[(.*?)\]",
+                 _strip_colon_list, out, flags=re.S)
+    # Single-value `:name` file-ref props (src: ":bad", bootconfig: ":bad", …):
+    # drop the whole line. The concat form (src: ":" + var + "-x") is only seen
+    # in test modules (removed wholesale, not ref-stripped); a production
+    # single-value concat `:name` is not stripped here (no current occurrence —
+    # a latent next-layer if one surfaces).
+    out = re.sub(
+        r'^[ \t]*\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*"(:[A-Za-z0-9_.+@-]+)"\s*,?[ \t]*\n',
+        lambda m: "" if m.group(2)[1:] in bad else m.group(0),
+        out, flags=re.M)
     return out
 
 for p in list(file_modules):
