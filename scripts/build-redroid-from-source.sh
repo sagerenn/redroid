@@ -983,7 +983,29 @@ DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              # list tails (deps:[...] + microdroid_shell_and_utilities) are safe:
              # strip_refs_from_block's regex matches only the `[...]` literal,
              # leaving the `+ var` tail intact.
-             "deps")
+             "deps",
+             # generated_sources/generated_headers/export_generated_headers are
+             # soong cc `[]string` MODULE-DEP properties (compiler.go:
+             # Generated_sources/Generated_headers []string; cc.go:2366
+             # actx.AddDependency(c, genSourceDepTag, deps.GeneratedSources...) —
+             # soong validates each entry as a module ref, hence "depends on
+             # undefined module" when the genrule is absent). They name genrule
+             # modules whose outputs are compiled as sources / consumed as headers
+             # / re-exported as headers — NEVER file paths. Without harvesting
+             # them, a test consumer of a LEGITIMATELY-removed genrule dangles:
+             # run 30865047195 arm64+amd64 (the layer AFTER the `:`-ref fix
+             # removed hidl_cpp_impl_test_gen-{sources,headers} — their srcs
+             # `:`-refs to the pruned hidl_interface android.hardware.tests.foo@1.0
+             # / hidl.tests.vendor.android@1.0 were now harvested -> bad -> test_like
+             # genrules removed) left cc_test_library hidl_cpp_impl_test referencing
+             # them via generated_sources/generated_headers -> invisible to the
+             # cascade -> not removed -> soong "depends on undefined module
+             # hidl_cpp_impl_test_gen-sources". Harvesting lets the consumer see
+             # the now-absent genrules -> bad ref -> test_like consumer removed
+             # (or production consumer ref-stripped, same as static_libs).
+             # exclude_generated_sources is NOT a dep (it is an exclusion list,
+             # compiler.go:273 removeListFromList) — omitted.
+             "generated_sources", "generated_headers", "export_generated_headers")
 
 # A soong string-concat expression token: a double-quoted string literal OR a
 # bare identifier (a soong variable). Used by eval_soong_str + the `:`-ref
