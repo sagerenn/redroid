@@ -1169,8 +1169,18 @@ def parse_file(path):
                 # Only module-name-shaped `:name` (identifier charset, matching
                 # the bad_refs_for filter) is harvested, so ":/path/to/x" /
                 # "://visibility:public" are not mistaken for module refs.
+                # Soong output-selector form `:name{.tag}` (e.g.
+                # ":android.car-stubs-docs{.removed-api.txt}") selects a specific
+                # output file of a module-output ref — it is STILL a dep on `name`,
+                # so the optional `{...}` is matched and stripped before harvesting.
+                # Run 30871527047 arm64+amd64: combined-removed-dex (prod genrule,
+                # frameworks/base/api) srcs:[":android.car-stubs-docs{.removed-api.txt}",
+                # ":android.car-system-stubs-docs{.removed-api.txt}"] -> both car
+                # stubs-docs absent (packages/services/Car pruned) -> bad `:`-ref ->
+                # ref-stripped. Before this, the `{}` weren't in the charset -> ref
+                # invisible -> combined-removed-dex kept dangling -> soong error.
                 nocmt = strip_comments(block)
-                for cm in re.finditer(r'"(:[A-Za-z0-9_.+@-]+)"', nocmt):
+                for cm in re.finditer(r'"(:[A-Za-z0-9_.+@-]+)(?:\{[^}]*\})?"', nocmt):
                     refs.add(cm.group(1)[1:])
                 # (b) `+`-concat expressions (2+ string-literal/ident tokens)
                 #     evaluating to a ":..." string.
@@ -1459,8 +1469,12 @@ def strip_refs_from_block(block, bad):
         prop = m.group(1)
         inner = strip_comments(m.group(2))
         items = qstr.findall(inner)
+        # `:name` OR `:name{.tag}` output-selector: the module name is the part
+        # before any `{` (so ":android.car-stubs-docs{.removed-api.txt}" -> name
+        # "android.car-stubs-docs"). A bad module ref in EITHER form is dropped.
         keep = [it for it in items
-                if it and not (it.startswith(":") and it[1:] in bad)]
+                if it and not (it.startswith(":")
+                               and it[1:].split("{", 1)[0] in bad)]
         if len(keep) == len(items):
             return m.group(0)   # no bad `:name` entry -> leave untouched
         return prop + ": [" + ", ".join('"' + it + '"' for it in keep) + "]"
@@ -1472,8 +1486,8 @@ def strip_refs_from_block(block, bad):
     # single-value concat `:name` is not stripped here (no current occurrence —
     # a latent next-layer if one surfaces).
     out = re.sub(
-        r'^[ \t]*\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*"(:[A-Za-z0-9_.+@-]+)"\s*,?[ \t]*\n',
-        lambda m: "" if m.group(2)[1:] in bad else m.group(0),
+        r'^[ \t]*\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*"(:[A-Za-z0-9_.+@-]+)(?:\{[^}]*\})?"\s*,?[ \t]*\n',
+        lambda m: "" if m.group(2)[1:].split("{", 1)[0] in bad else m.group(0),
         out, flags=re.M)
     return out
 
