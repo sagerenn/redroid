@@ -1005,7 +1005,31 @@ DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              # (or production consumer ref-stripped, same as static_libs).
              # exclude_generated_sources is NOT a dep (it is an exclusion list,
              # compiler.go:273 removeListFromList) — omitted.
-             "generated_sources", "generated_headers", "export_generated_headers")
+             "generated_sources", "generated_headers", "export_generated_headers",
+             # Apex (build/soong/apex/apex.go) dep-validated `[]string` module-name
+             # list props. Each has a PropertyErrorf validating the entry as a
+             # specific module TYPE, so soong errors "depends on undefined module"
+             # when the named module is absent (redroid prunes apex test fixtures
+             # + some prebuilts). Same safety class as `deps`/generated_*: present
+             # refs preserved, only absent refs stripped (prod) / removed (test).
+             # Run 30878781232 arm64: apex.apexd_test_different_app (test_like by
+             # name _test_) prebuilts:["sample_prebuilt_file"] — sample_prebuilt_file
+             # is a test fixture referenced ~24x in apexd_testdata/apexer testdata
+             # but defined NOWHERE (its defining project is pruned); prebuilts was
+             # not harvested -> ref invisible -> test apex kept dangling -> soong
+             # error. Harvesting lets the test apex see the absent fixture -> bad
+             # ref -> test_like -> removed. The whole family is added together
+             # (each is the same dep-validated []string class; verified used in-tree
+             # as module-ref lists: binaries:["crosvm"], tests:art_gtests,
+             # apps/rros/bpfs/filesystems/sh_binaries/bootclasspath_fragments/
+             # systemserverclasspath_fragments/java_libs/compat_configs all PropertyErrorf
+             # a module type). `overrides` is OMITTED — apex.go has NO PropertyErrorf
+             # for it (soong replaces, does not dep-validate), so an absent override
+             # never errors. `key` (single-value apex_key ref) is left to the
+             # `:`-ref/single-ref paths; signing keys are kept (not a pruned surface).
+             "prebuilts", "binaries", "apps", "bpfs", "rros", "filesystems",
+             "sh_binaries", "java_libs", "compat_configs", "tests",
+             "bootclasspath_fragments", "systemserverclasspath_fragments")
 
 # A soong string-concat expression token: a double-quoted string literal OR a
 # bare identifier (a soong variable). Used by eval_soong_str + the `:`-ref
