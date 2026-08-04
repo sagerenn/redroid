@@ -1029,7 +1029,29 @@ DEP_PROPS = ("static_libs", "shared_libs", "libs", "header_libs",
              # `:`-ref/single-ref paths; signing keys are kept (not a pruned surface).
              "prebuilts", "binaries", "apps", "bpfs", "rros", "filesystems",
              "sh_binaries", "java_libs", "compat_configs", "tests",
-             "bootclasspath_fragments", "systemserverclasspath_fragments")
+             "bootclasspath_fragments", "systemserverclasspath_fragments",
+             # `apex_available` (build/soong/android/apex.go:485-490
+             # checkApexAvailableProperty) is a `[]string` on every ApexModule
+             # (cc/java/prebuilt/etc.) listing the APEX module names that may
+             # package it. Soong dep-validates EVERY entry: each must be either a
+             # special token ("//apex_available:platform" / ":anyapex" / ":gki")
+             # OR a module for which mctx.OtherModuleExists(n) is true, else
+             # `PropertyErrorf("apex_available", "%q is not a valid module name")`.
+             # Same safety class as `deps`/generated_*: present refs preserved,
+             # only absent refs stripped (prod) / removed (test). The special
+             # tokens are auto-excluded — they start with `/` (and contain `:`),
+             # so the bad_refs_for identifier filter `[A-Za-z][A-Za-z0-9_.+@-]*`
+             # fullmatch REJECTS them -> never flagged bad -> never stripped.
+             # Run 30882784562 arm64: prebuilts/module_sdk/Media/1/Android.bp:38
+             # java_import media-module-sdk_updatable-media@1 (PRODUCTION, not
+             # test_like) apex_available:["com.android.media","test_com.android.media"]
+             # — test_com.android.media is a test apex (defined in
+             # frameworks/av/apex/testing on stock r82, test_like by name `test_`)
+             # that is absent in the redroid tree (project pruned); apex_available
+             # was not harvested -> ref invisible -> prebuilt kept dangling ->
+             # soong "is not a valid module name". Harvesting strips the absent
+             # test_apex entry, keeping the present com.android.media ref.
+             "apex_available")
 
 # A soong string-concat expression token: a double-quoted string literal OR a
 # bare identifier (a soong variable). Used by eval_soong_str + the `:`-ref
